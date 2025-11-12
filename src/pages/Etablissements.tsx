@@ -12,6 +12,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Search, Plus } from "lucide-react";
+import { EstablishmentDrawer } from "@/components/EstablishmentDrawer";
+import { EstablishmentForm } from "@/components/EstablishmentForm";
 
 interface Establishment {
   id: string;
@@ -27,6 +29,9 @@ const Etablissements = () => {
   const [establishments, setEstablishments] = useState<Establishment[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  const [selectedEstablishmentId, setSelectedEstablishmentId] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
 
   useEffect(() => {
     fetchEstablishments();
@@ -60,6 +65,11 @@ const Etablissements = () => {
     e.ville?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const handleRowClick = (id: string) => {
+    setSelectedEstablishmentId(id);
+    setDrawerOpen(true);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -67,7 +77,7 @@ const Etablissements = () => {
           <h1 className="text-3xl font-bold text-foreground">Établissements</h1>
           <p className="text-muted-foreground">Gérez votre portefeuille de prospects et clients</p>
         </div>
-        <Button className="gap-2">
+        <Button className="gap-2" onClick={() => setFormOpen(true)}>
           <Plus className="h-4 w-4" />
           Nouvel établissement
         </Button>
@@ -113,6 +123,7 @@ const Etablissements = () => {
                 <TableRow
                   key={establishment.id}
                   className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => handleRowClick(establishment.id)}
                 >
                   <TableCell className="font-medium">{establishment.nom}</TableCell>
                   <TableCell>{establishment.groupe?.valeur || "-"}</TableCell>
@@ -128,6 +139,19 @@ const Etablissements = () => {
           </TableBody>
         </Table>
       </div>
+
+      <EstablishmentDrawer
+        establishmentId={selectedEstablishmentId}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        onUpdate={fetchEstablishments}
+      />
+
+      <EstablishmentForm
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        onSuccess={fetchEstablishments}
+      />
     </div>
   );
 };
