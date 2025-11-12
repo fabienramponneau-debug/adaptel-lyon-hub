@@ -57,6 +57,18 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        prospect: {
+          DEFAULT: "hsl(var(--prospect))",
+          foreground: "hsl(var(--prospect-foreground))",
+        },
+        client: {
+          DEFAULT: "hsl(var(--client))",
+          foreground: "hsl(var(--client-foreground))",
+        },
+        "ancien-client": {
+          DEFAULT: "hsl(var(--ancien-client))",
+          foreground: "hsl(var(--ancien-client-foreground))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
