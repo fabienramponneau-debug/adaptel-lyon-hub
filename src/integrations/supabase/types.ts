@@ -65,6 +65,53 @@ export type Database = {
           },
         ]
       }
+      competitors_history: {
+        Row: {
+          coefficient: number | null
+          commentaire: string | null
+          concurrent_nom: string
+          created_at: string
+          created_by: string | null
+          date_info: string
+          etablissement_id: string
+          id: string
+          taux_horaire: number | null
+          updated_at: string
+        }
+        Insert: {
+          coefficient?: number | null
+          commentaire?: string | null
+          concurrent_nom: string
+          created_at?: string
+          created_by?: string | null
+          date_info?: string
+          etablissement_id: string
+          id?: string
+          taux_horaire?: number | null
+          updated_at?: string
+        }
+        Update: {
+          coefficient?: number | null
+          commentaire?: string | null
+          concurrent_nom?: string
+          created_at?: string
+          created_by?: string | null
+          date_info?: string
+          etablissement_id?: string
+          id?: string
+          taux_horaire?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "competitors_history_etablissement_id_fkey"
+            columns: ["etablissement_id"]
+            isOneToOne: false
+            referencedRelation: "establishments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contacts: {
         Row: {
           actif: boolean
@@ -249,6 +296,59 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      suggestions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string | null
+          etablissement_id: string | null
+          id: string
+          priorite: string
+          statut: string
+          titre: string
+          traite_at: string | null
+          traite_by: string | null
+          type: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          etablissement_id?: string | null
+          id?: string
+          priorite?: string
+          statut?: string
+          titre: string
+          traite_at?: string | null
+          traite_by?: string | null
+          type: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          etablissement_id?: string | null
+          id?: string
+          priorite?: string
+          statut?: string
+          titre?: string
+          traite_at?: string | null
+          traite_by?: string | null
+          type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "suggestions_etablissement_id_fkey"
+            columns: ["etablissement_id"]
+            isOneToOne: false
+            referencedRelation: "establishments"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
