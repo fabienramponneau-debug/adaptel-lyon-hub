@@ -1,25 +1,38 @@
-import { Badge } from "@/components/ui/badge";
+// components/StatusBadge.tsx
 import { cn } from "@/lib/utils";
 
-type Status = "prospect" | "client" | "ancien_client";
-
 interface StatusBadgeProps {
-  status: Status;
+  status: "prospect" | "client" | "ancien_client";
   className?: string;
 }
 
-const statusConfig: Record<Status, { label: string; color: string }> = {
-  prospect: { label: "Prospect", color: "bg-prospect text-prospect-foreground" },
-  client: { label: "Client", color: "bg-client text-client-foreground" },
-  ancien_client: { label: "Ancien client", color: "bg-ancien-client text-ancien-client-foreground" },
-};
-
 export const StatusBadge = ({ status, className }: StatusBadgeProps) => {
+  const statusConfig = {
+    prospect: {
+      label: "Prospect",
+      className: "bg-orange-100 text-orange-800 border-orange-200"
+    },
+    client: {
+      label: "Client actif", 
+      className: "bg-green-100 text-green-800 border-green-200"
+    },
+    ancien_client: {
+      label: "Ancien client",
+      className: "bg-slate-100 text-slate-800 border-slate-200"
+    }
+  };
+
   const config = statusConfig[status];
 
   return (
-    <Badge className={cn(config.color, "font-medium", className)}>
+    <span
+      className={cn(
+        "inline-flex items-center justify-center px-3 py-1 rounded-md text-sm font-medium border min-w-[100px] text-center",
+        config.className,
+        className
+      )}
+    >
       {config.label}
-    </Badge>
+    </span>
   );
 };
