@@ -1,392 +1,219 @@
-// components/EstablishmentSheet.tsx
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { TrendingUp, Target, Building2 } from "lucide-react";
-
-// Import des composants
-import EstablishmentHeader from "./EstablishmentHeader";
+import { EstablishmentHeader } from "./EstablishmentHeader";
 import EstablishmentContacts from "./EstablishmentContacts";
-import EstablishmentTimeline from "./EstablishmentTimeline";
+import { EstablishmentTimeline } from "./EstablishmentTimeline";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Building2, Target, TrendingUp } from "lucide-react";
 
-interface EstablishmentSheetProps {
-  establishmentId: string | null;
-  open: boolean;
-  onClose: () => void;
-  onUpdate: () => void;
-}
+interface Props { establishmentId: string | null; open: boolean; onClose: () => void; onUpdate: () => void; }
 
-const EstablishmentSheet = ({ establishmentId, open, onClose, onUpdate }: EstablishmentSheetProps) => {
-  const [establishment, setEstablishment] = useState<any>(null);
+export const EstablishmentSheet = ({ establishmentId, open, onClose, onUpdate }: Props) => {
+  const [model, setModel] = useState<any>(null);
   const [contacts, setContacts] = useState<any[]>([]);
   const [actions, setActions] = useState<any[]>([]);
-  const [parametrages, setParametrages] = useState<any[]>([]);
+  const [params, setParams] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState<"idle" | "saving">("idle");
 
+  // ESC pour fermer
   useEffect(() => {
-    if (establishmentId && open) {
-      fetchEstablishmentData();
-      fetchParametrages();
-    }
-  }, [establishmentId, open]);
+    if (!open) return;
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [open, onClose]);
 
-  const fetchEstablishmentData = async () => {
-    if (!establishmentId) return;
-    
+  // load
+  useEffect(() => {
+    if (open && establishmentId) {
+      void fetchAll();
+    } else {
+      setModel(null); setContacts([]); setActions([]);
+    }
+  }, [open, establishmentId]);
+
+  async function fetchAll() {
     setLoading(true);
-    
-    try {
-      const { data: establishmentData, error } = await supabase
-        .from("establishments")
-        .select(`
-          *,
-          groupe:groupe_id(valeur),
-          secteur:secteur_id(valeur),
-          activite:activite_id(valeur),
-          concurrent:concurrent_id(valeur)
-        `)
-        .eq("id", establishmentId)
-        .single();
+    const [{ data: est }, { data: c }, { data: a }] = await Promise.all([
+      supabase.from("establishments").select(`*, groupe:groupe_id(valeur), secteur:secteur_id(valeur), activite:activite_id(valeur), concurrent:concurrent_id(valeur)`).eq("id", establishmentId).single(),
+      supabase.from("contacts").select("*").eq("etablissement_id", establishmentId).order("created_at", { ascending: false }),
+      supabase.from("actions").select(`*, user:user_id(nom, prenom)`).eq("etablissement_id", establishmentId).order("date_action", { ascending: false }),
+    ]);
+    const { data: p } = await supabase.from("parametrages").select("*").order("valeur", { ascending: true });
+    setModel(est || null); setContacts(c || []); setActions(a || []); setParams(p || []);
+    setLoading(false);
+  }
 
-      if (error) throw error;
-
-      const { data: contactsData, error: contactsError } = await supabase
-        .from("contacts")
-        .select("*")
-        .eq("etablissement_id", establishmentId)
-        .order("created_at", { ascending: false });
-
-      const { data: actionsData, error: actionsError } = await supabase
-        .from("actions")
-        .select(`
-          *,
-          user:user_id(nom, prenom)
-        `)
-        .eq("etablissement_id", establishmentId)
-        .order("date_action", { ascending: false });
-
-      setEstablishment(establishmentData || null);
-      setContacts(contactsData || []);
-      setActions(actionsData || []);
-    } catch (error) {
-      console.error("Error fetching establishment data:", error);
-      setEstablishment(null);
-      setContacts([]);
-      setActions([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchParametrages = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("parametrages")
-        .select("*")
-        .order("valeur", { ascending: true });
-      
-      if (error) throw error;
-      setParametrages(data || []);
-    } catch (error) {
-      console.error("Error fetching parametrages:", error);
-      setParametrages([]);
-    }
-  };
-
-  const handleSave = async () => {
-    if (!establishment) return;
-    
-    setSaving(true);
-    try {
-      const { error } = await supabase
-        .from("establishments")
-        .update({
-          nom: establishment.nom,
-          ville: establishment.ville,
-          statut: establishment.statut,
-          adresse: establishment.adresse,
-          code_postal: establishment.code_postal,
-          commentaire: establishment.commentaire,
-          groupe_id: establishment.groupe_id,
-          secteur_id: establishment.secteur_id,
-          activite_id: establishment.activite_id,
-          concurrent_id: establishment.concurrent_id,
-          info_concurrent: establishment.info_concurrent,
-          coefficient_concurrent: establishment.coefficient_concurrent,
-        })
-        .eq("id", establishment.id);
-
-      if (error) throw error;
-      onUpdate();
-    } catch (error) {
-      console.error("Error saving establishment:", error);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleAddContact = async (newContact: any) => {
-    if (!establishmentId) return;
-
-    try {
-      const { error } = await supabase
-        .from("contacts")
-        .insert([{
-          etablissement_id: establishmentId,
-          nom: newContact.nom,
-          prenom: newContact.prenom,
-          fonction: newContact.fonction || null,
-          telephone: newContact.telephone || null,
-          email: newContact.email || null,
-        }]);
-
-      if (error) throw error;
-
-      const { data: contactsData, error: fetchError } = await supabase
-        .from("contacts")
-        .select("*")
-        .eq("etablissement_id", establishmentId)
-        .order("created_at", { ascending: false });
-      
-      if (!fetchError) {
-        setContacts(contactsData || []);
+  // AUTOSAVE (debounced)
+  const saveTimer = useRef<number | null>(null);
+  const scheduleSave = useCallback(async (payload: any) => {
+    if (!model) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(async () => {
+      setSaving("saving");
+      // tentatives avec coefficient_concurrent (si colonne absente => retrait puis retry)
+      const full = { ...payload };
+      if ("coefficient_concurrent" in full) {
+        full.coefficient_concurrent = (full.coefficient_concurrent === "" || full.coefficient_concurrent == null)
+          ? null : parseFloat(String(full.coefficient_concurrent).replace(",", "."));
       }
-    } catch (error) {
-      console.error("Error adding contact:", error);
-    }
+      let { error } = await supabase.from("establishments").update(full).eq("id", model.id);
+      if (error && String(error.message).toLowerCase().includes("column") && String(error.message).toLowerCase().includes("does not exist")) {
+        // retry sans le champ
+        const { coefficient_concurrent, ...fallback } = full;
+        await supabase.from("establishments").update(fallback).eq("id", model.id);
+      }
+      setSaving("idle");
+      onUpdate();
+    }, 600); // 600ms
+  }, [model, onUpdate]);
+
+  const onChange = (patch: any) => {
+    setModel((prev: any) => (prev ? { ...prev, ...patch } : prev));
+    scheduleSave(patch);
   };
 
-  const handleEstablishmentChange = (updates: any) => {
-    setEstablishment(prev => prev ? { ...prev, ...updates } : null);
-  };
+  const groupes = useMemo(()=> params.filter(p=>p.categorie==="groupe"), [params]);
+  const secteurs = useMemo(()=> params.filter(p=>p.categorie==="secteur"), [params]);
+  const activites = useMemo(()=> params.filter(p=>p.categorie==="activite"), [params]);
+  const concurrents = useMemo(()=> params.filter(p=>p.categorie==="concurrent"), [params]);
 
   if (!open) return null;
-
-  const groupes = parametrages.filter(p => p.categorie === 'groupe');
-  const secteurs = parametrages.filter(p => p.categorie === 'secteur');
-  const activites = parametrages.filter(p => p.categorie === 'activite');
-  const concurrents = parametrages.filter(p => p.categorie === 'concurrent');
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end pointer-events-none">
       <div className="absolute inset-0" onClick={onClose} />
-      
-      <div className="relative w-full max-w-4xl bg-white shadow-xl h-full overflow-y-auto border-l border-slate-200 pointer-events-auto">
-        <EstablishmentHeader
-          establishment={establishment}
-          loading={loading}
-          saving={saving}
-          onSave={handleSave}
-          onClose={onClose}
-          onEstablishmentChange={handleEstablishmentChange}
-        />
+      <div className="relative w-full max-w-5xl bg-white shadow-xl h-full overflow-y-auto border-l border-slate-200 pointer-events-auto">
+        <EstablishmentHeader establishment={model} loading={loading} saving={saving==="saving"} onEstablishmentChange={onChange} onClose={onClose} />
 
         <div className="p-6">
           {loading ? (
             <div className="space-y-4">
-              <div className="h-4 bg-slate-200 rounded animate-pulse"></div>
-              <div className="h-4 bg-slate-200 rounded animate-pulse w-3/4"></div>
+              <div className="h-4 bg-slate-200 rounded animate-pulse" />
+              <div className="h-4 bg-slate-200 rounded animate-pulse w-3/4" />
             </div>
-          ) : establishment ? (
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-              {/* Colonne gauche - Informations et Contacts */}
-              <div className="lg:col-span-2 space-y-6">
-                {/* Informations générales */}
+          ) : !model ? (
+            <div className="text-center text-slate-500 py-8">Établissement non trouvé</div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-[520px,1fr] gap-6">
+              {/* Colonne gauche (fixe, scroll interne si besoin) */}
+              <div className="space-y-6">
+                {/* Informations */}
                 <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-                  <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2 text-lg">
-                    <Building2 className="h-5 w-5 text-[#840404]" />
-                    Informations générales
+                  <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2 text-[15px]">
+                    <Building2 className="h-5 w-5 text-[#840404]" /> Informations
                   </h3>
-                  
-                  <div className="space-y-4">
-                    <div>
-                      <label className="text-sm font-medium text-slate-700">Adresse</label>
-                      <Input
-                        value={establishment.adresse || ""}
-                        onChange={(e) => handleEstablishmentChange({ adresse: e.target.value })}
-                        placeholder="Adresse"
-                        className="mt-1"
-                      />
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium text-slate-700">Code postal</label>
-                        <Input
-                          value={establishment.code_postal || ""}
-                          onChange={(e) => handleEstablishmentChange({ code_postal: e.target.value })}
-                          placeholder="Code postal"
-                          className="mt-1"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium text-slate-700">Groupe</label>
-                        <Select
-                          value={establishment.groupe_id || "none"}
-                          onValueChange={(value) => handleEstablishmentChange({ groupe_id: value === "none" ? null : value })}
-                        >
-                          <SelectTrigger className="mt-1">
-                            <SelectValue placeholder="Sélectionner un groupe" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">Aucun groupe</SelectItem>
-                            {groupes.map((groupe) => (
-                              <SelectItem key={groupe.id} value={groupe.id}>
-                                {groupe.valeur}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium text-slate-700">Secteur</label>
-                        <Select
-                          value={establishment.secteur_id || "none"}
-                          onValueChange={(value) => handleEstablishmentChange({ secteur_id: value === "none" ? null : value })}
-                        >
-                          <SelectTrigger className="mt-1">
-                            <SelectValue placeholder="Sélectionner un secteur" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">Aucun secteur</SelectItem>
-                            {secteurs.map((secteur) => (
-                              <SelectItem key={secteur.id} value={secteur.id}>
-                                {secteur.valeur}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium text-slate-700">Activité</label>
-                        <Select
-                          value={establishment.activite_id || "none"}
-                          onValueChange={(value) => handleEstablishmentChange({ activite_id: value === "none" ? null : value })}
-                        >
-                          <SelectTrigger className="mt-1">
-                            <SelectValue placeholder="Sélectionner une activité" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">Aucune activité</SelectItem>
-                            {activites.map((activite) => (
-                              <SelectItem key={activite.id} value={activite.id}>
-                                {activite.valeur}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="text-sm font-medium text-slate-700">Commentaire</label>
-                      <Textarea
-                        value={establishment.commentaire || ""}
-                        onChange={(e) => handleEstablishmentChange({ commentaire: e.target.value })}
-                        placeholder="Commentaires..."
-                        className="mt-1 resize-none"
-                        rows={3}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Contacts */}
-                <EstablishmentContacts 
-                  contacts={contacts}
-                  onAddContact={handleAddContact}
-                />
-
-                {/* Concurrence */}
-                <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-                  <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2 text-lg">
-                    <Target className="h-5 w-5 text-[#840404]" />
-                    Informations concurrence
-                  </h3>
-                  
-                  <div className="space-y-4">
-                    <div>
-                      <label className="text-sm font-medium text-slate-700">Concurrent actuel</label>
-                      <Select
-                        value={establishment.concurrent_id || "none"}
-                        onValueChange={(value) => handleEstablishmentChange({ concurrent_id: value === "none" ? null : value })}
-                      >
-                        <SelectTrigger className="mt-1">
-                          <SelectValue placeholder="Sélectionner un concurrent" />
-                        </SelectTrigger>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2">
+                      <label className="text-sm font-medium text-slate-700">Statut</label>
+                      <Select value={model.statut || "prospect"} onValueChange={(v:any)=>onChange({ statut: v })}>
+                        <SelectTrigger className="mt-1"><SelectValue/></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="none">Aucun concurrent</SelectItem>
-                          {concurrents.map((concurrent) => (
-                            <SelectItem key={concurrent.id} value={concurrent.id}>
-                              {concurrent.valeur}
-                            </SelectItem>
-                          ))}
+                          <SelectItem value="prospect">Prospect</SelectItem>
+                          <SelectItem value="client">Client</SelectItem>
+                          <SelectItem value="ancien_client">Ancien client</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
+                    <div className="col-span-2">
+                      <label className="text-sm font-medium text-slate-700">Nom</label>
+                      <Input className="mt-1" value={model.nom || ""} onChange={e=>onChange({ nom: e.target.value })}/>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">Groupe</label>
+                      <Select value={model.groupe_id || "none"} onValueChange={(v)=>onChange({ groupe_id: v==="none"? null : v })}>
+                        <SelectTrigger className="mt-1"><SelectValue placeholder="Sélectionner"/></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Aucun</SelectItem>
+                          {groupes.map((g:any)=> <SelectItem key={g.id} value={g.id}>{g.valeur}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">Activité</label>
+                      <Select value={model.activite_id || "none"} onValueChange={(v)=>onChange({ activite_id: v==="none"? null : v })}>
+                        <SelectTrigger className="mt-1"><SelectValue placeholder="Sélectionner"/></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Aucune</SelectItem>
+                          {activites.map((a:any)=> <SelectItem key={a.id} value={a.id}>{a.valeur}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">Secteur</label>
+                      <Select value={model.secteur_id || "none"} onValueChange={(v)=>onChange({ secteur_id: v==="none"? null : v })}>
+                        <SelectTrigger className="mt-1"><SelectValue placeholder="Sélectionner"/></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Aucun</SelectItem>
+                          {secteurs.map((s:any)=> <SelectItem key={s.id} value={s.id}>{s.valeur}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-sm font-medium text-slate-700">Adresse</label>
+                      <Input className="mt-1" value={model.adresse || ""} onChange={e=>onChange({ adresse: e.target.value })}/>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">Code postal</label>
+                      <Input className="mt-1" value={model.code_postal || ""} onChange={e=>onChange({ code_postal: e.target.value })}/>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">Ville</label>
+                      <Input className="mt-1" value={model.ville || ""} onChange={e=>onChange({ ville: e.target.value })}/>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-sm font-medium text-slate-700">Commentaire</label>
+                      <Textarea rows={3} className="mt-1 resize-none" value={model.commentaire || ""} onChange={e=>onChange({ commentaire: e.target.value })}/>
+                    </div>
+                  </div>
+                </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium text-slate-700">Coefficient</label>
-                        <div className="relative mt-1">
-                          <TrendingUp className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
-                          <Input
-                            type="number"
-                            step="0.1"
-                            min="0"
-                            max="10"
-                            value={establishment.coefficient_concurrent || ""}
-                            onChange={(e) => handleEstablishmentChange({ coefficient_concurrent: e.target.value })}
-                            placeholder="0.0 - 10.0"
-                            className="pl-10"
-                          />
-                        </div>
+                {/* Contacts (hauteur fixe + scroll) */}
+                <EstablishmentContacts contacts={contacts} establishmentId={establishmentId} onContactsUpdate={fetchAll} />
+
+                {/* Concurrence */}
+                <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+                  <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2 text-[15px]">
+                    <Target className="h-5 w-5 text-[#840404]" /> Concurrence
+                  </h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2">
+                      <label className="text-sm font-medium text-slate-700">Concurrent</label>
+                      <Select value={model.concurrent_id || "none"} onValueChange={(v)=>onChange({ concurrent_id: v==="none"? null : v })}>
+                        <SelectTrigger className="mt-1"><SelectValue placeholder="Sélectionner"/></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Aucun</SelectItem>
+                          {concurrents.map((c:any)=> <SelectItem key={c.id} value={c.id}>{c.valeur}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">Coefficient</label>
+                      <div className="relative mt-1">
+                        <TrendingUp className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400"/>
+                        <Input className="pl-10" inputMode="decimal" placeholder="0,0 – 10,0"
+                          value={model.coefficient_concurrent ?? ""} onChange={e=>onChange({ coefficient_concurrent: e.target.value })}/>
                       </div>
                     </div>
-
-                    <div>
-                      <label className="text-sm font-medium text-slate-700">Informations complémentaires</label>
-                      <Textarea
-                        value={establishment.info_concurrent || ""}
-                        onChange={(e) => handleEstablishmentChange({ info_concurrent: e.target.value })}
-                        placeholder="Détails sur la situation concurrentielle..."
-                        className="mt-1 resize-none"
-                        rows={3}
-                      />
+                    <div className="col-span-2">
+                      <label className="text-sm font-medium text-slate-700">Infos</label>
+                      <Textarea rows={3} className="mt-1 resize-none" value={model.info_concurrent || ""} onChange={e=>onChange({ info_concurrent: e.target.value })}/>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Colonne droite - Timeline */}
-              <div className="lg:col-span-2">
-                <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-                  <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2 text-lg">
-                    Historique des actions
-                  </h3>
-                  <EstablishmentTimeline actions={actions} />
-                </div>
+              {/* Colonne droite : timeline plein espace, lisible */}
+              <div className="space-y-6">
+                <EstablishmentTimeline actions={actions} loading={loading} establishmentId={establishmentId!} onChanged={fetchAll}/>
               </div>
             </div>
-          ) : (
-            <div className="text-center text-slate-500 py-8">Établissement non trouvé</div>
           )}
         </div>
       </div>
     </div>
   );
 };
-
-export default EstablishmentSheet;
