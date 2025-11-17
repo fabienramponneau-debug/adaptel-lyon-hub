@@ -271,7 +271,6 @@ const Prospection = () => {
                 ) : (
                   dayActions.map((action) => {
                     const colorClass = getActionColor(action.type);
-                    const label = getActionLabel(action.type);
                     const nom =
                       action.etablissement?.nom || "Établissement";
 
@@ -287,21 +286,16 @@ const Prospection = () => {
                           {getActionIcon(action.type)}
                         </div>
 
-                        {/* Ligne : nom établissement + badge type */}
+                        {/* Nom établissement uniquement (plus d’étiquette type) */}
                         <button
                           type="button"
-                          className="flex-1 flex items-center justify-between gap-2 min-w-0 text-left"
+                          className="flex-1 min-w-0 text-left"
                           onClick={() =>
                             openEstablishment(action.etablissement_id)
                           }
                         >
                           <span className="text-[12px] font-medium text-slate-900 truncate">
                             {nom}
-                          </span>
-                          <span
-                            className={`text-[10px] px-1.5 py-0.5 rounded-full border ${colorClass}`}
-                          >
-                            {label}
                           </span>
                         </button>
 
@@ -593,8 +587,11 @@ const Prospection = () => {
       <ActionForm
         open={actionFormOpen}
         onOpenChange={setActionFormOpen}
-        establishmentId=""
-        onSuccess={fetchActions}
+        establishmentId={undefined}
+        onSuccess={() => {
+          fetchActions();
+          fetchReminders();
+        }}
         prefilledDate={selectedDate}
       />
 
