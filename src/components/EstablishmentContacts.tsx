@@ -1,72 +1,388 @@
 import { useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Users, User, Mail, Phone } from "lucide-react";
+import { Mail, Phone, User, Pencil, Trash2, Plus } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 
-interface Contact { id: string; nom: string; prenom: string; fonction: string | null; telephone: string | null; email: string | null; }
-interface Props { contacts: Contact[]; establishmentId: string | null; onContactsUpdate: () => void; }
+interface EstablishmentContactsProps {
+  contacts: any[];
+  establishmentId: string | null;
+  onContactsUpdate: () => Promise<void> | void;
+}
 
-export default function EstablishmentContacts({ contacts, establishmentId, onContactsUpdate }: Props) {
-  const [showAdd, setShowAdd] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ nom: "", prenom: "", fonction: "", telephone: "", email: "" });
+export default function EstablishmentContacts({
+  contacts,
+  establishmentId,
+  onContactsUpdate,
+}: EstablishmentContactsProps) {
+  const [creating, setCreating] = useState(false);
+  const [newContact, setNewContact] = useState({
+    nom: "",
+    prenom: "",
+    fonction: "",
+    telephone: "",
+    email: "",
+  });
 
-  async function add() {
-    if (!establishmentId || !form.nom || !form.prenom) return;
-    setSaving(true);
-    const { error } = await supabase.from("contacts").insert([{
-      etablissement_id: establishmentId, nom: form.nom, prenom: form.prenom,
-      fonction: form.fonction || null, telephone: form.telephone || null, email: form.email || null
-    }]);
-    setSaving(false);
-    if (!error) { setForm({ nom:"", prenom:"", fonction:"", telephone:"", email:"" }); setShowAdd(false); onContactsUpdate(); }
-  }
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingContact, setEditingContact] = useState<any | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const handleCreate = async () => {
+    if (!establishmentId) return;
+    if (!newContact.nom.trim()) return;
+
+    setSavingId("new");
+    await supabase.from("contacts").insert({
+      etablissement_id: establishmentId,
+      nom: newContact.nom.trim(),
+      prenom: newContact.prenom.trim(),
+      fonction: newContact.fonction.trim() || null,
+      telephone: newContact.telephone.trim() || null,
+      email: newContact.email.trim() || null,
+      actif: true,
+    } as any);
+    setSavingId(null);
+    setNewContact({
+      nom: "",
+      prenom: "",
+      fonction: "",
+      telephone: "",
+      email: "",
+    });
+    setCreating(false);
+    await onContactsUpdate();
+  };
+
+  const startEdit = (contact: any) => {
+    setEditingId(contact.id);
+    setEditingContact({
+      nom: contact.nom || "",
+      prenom: contact.prenom || "",
+      fonction: contact.fonction || "",
+      telephone: contact.telephone || "",
+      email: contact.email || "",
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditingContact(null);
+  };
+
+  const handleUpdate = async (id: string) => {
+    if (!editingContact) return;
+    setSavingId(id);
+    await supabase
+      .from("contacts")
+      .update({
+        nom: editingContact.nom.trim(),
+        prenom: editingContact.prenom.trim(),
+        fonction: editingContact.fonction.trim() || null,
+        telephone: editingContact.telephone.trim() || null,
+        email: editingContact.email.trim() || null,
+      } as any)
+      .eq("id", id);
+    setSavingId(null);
+    cancelEdit();
+    await onContactsUpdate();
+  };
+
+  const handleDelete = async (id: string) => {
+    setDeletingId(id);
+    await supabase.from("contacts").delete().eq("id", id);
+    setDeletingId(null);
+    await onContactsUpdate();
+  };
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold text-slate-900 flex items-center gap-2 text-[15px]"><Users className="h-5 w-5 text-[#840404]"/> Contacts</h3>
-        <Button size="sm" onClick={()=>setShowAdd(true)} className="gap-2 bg-[#840404] hover:bg-[#730303]">
-          <User className="h-4 w-4"/> Ajouter
-        </Button>
-      </div>
-
-      {showAdd && (
-        <div className="bg-slate-50 rounded-lg p-4 mb-4 border border-slate-200">
-          <div className="grid grid-cols-2 gap-3">
-            <Input placeholder="Nom" value={form.nom} onChange={e=>setForm({...form, nom: e.target.value})}/>
-            <Input placeholder="Prénom" value={form.prenom} onChange={e=>setForm({...form, prenom: e.target.value})}/>
+    <Card className="bg-white rounded-xl border border-slate-200 shadow-sm">
+      <CardContent className="p-6 space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-slate-900 text-[15px]">
+              Contacts
+            </h3>
+            <p className="text-slate-500 text-xs">
+              {contacts.length} contact(s) associé(s)
+            </p>
           </div>
-          <div className="grid grid-cols-2 gap-3 mt-3">
-            <Input placeholder="Fonction" value={form.fonction} onChange={e=>setForm({...form, fonction: e.target.value})}/>
-            <Input placeholder="Téléphone" value={form.telephone} onChange={e=>setForm({...form, telephone: e.target.value})}/>
-          </div>
-          <Input className="mt-3" placeholder="Email" type="email" value={form.email} onChange={e=>setForm({...form, email: e.target.value})}/>
-          <div className="flex gap-2 mt-3">
-            <Button size="sm" onClick={add} disabled={saving}>{saving ? "Ajout…" : "Ajouter"}</Button>
-            <Button variant="outline" size="sm" onClick={()=>setShowAdd(false)}>Annuler</Button>
-          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1 h-8 text-xs border-slate-300"
+            onClick={() => setCreating((v) => !v)}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {creating ? "Annuler" : "Ajouter"}
+          </Button>
         </div>
-      )}
 
-      <div className="space-y-3 max-h-60 overflow-y-auto">
-        {contacts.map(c => (
-          <div key={c.id} className="bg-slate-50 rounded-lg p-4 border border-slate-200">
-            <div className="font-medium text-slate-900">{c.prenom} {c.nom}</div>
-            {c.fonction && <div className="text-sm text-slate-600 mt-1">{c.fonction}</div>}
-            <div className="flex items-center gap-4 mt-3 text-sm">
-              {c.telephone && <div className="flex items-center gap-2 text-slate-700"><Phone className="h-4 w-4"/>{c.telephone}</div>}
-              {c.email && <div className="flex items-center gap-2 text-slate-700"><Mail className="h-4 w-4"/>{c.email}</div>}
+        {/* Formulaire ajout */}
+        {creating && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className="text-xs font-medium text-slate-700">
+                  Nom *
+                </label>
+                <Input
+                  className="mt-1 h-8 text-sm"
+                  value={newContact.nom}
+                  onChange={(e) =>
+                    setNewContact((c) => ({ ...c, nom: e.target.value }))
+                  }
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-700">
+                  Prénom
+                </label>
+                <Input
+                  className="mt-1 h-8 text-sm"
+                  value={newContact.prenom}
+                  onChange={(e) =>
+                    setNewContact((c) => ({
+                      ...c,
+                      prenom: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-700">
+                  Fonction
+                </label>
+                <Input
+                  className="mt-1 h-8 text-sm"
+                  value={newContact.fonction}
+                  onChange={(e) =>
+                    setNewContact((c) => ({
+                      ...c,
+                      fonction: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-700">
+                  Téléphone
+                </label>
+                <Input
+                  className="mt-1 h-8 text-sm"
+                  value={newContact.telephone}
+                  onChange={(e) =>
+                    setNewContact((c) => ({
+                      ...c,
+                      telephone: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-700">
+                  Email
+                </label>
+                <Input
+                  className="mt-1 h-8 text-sm"
+                  value={newContact.email}
+                  onChange={(e) =>
+                    setNewContact((c) => ({
+                      ...c,
+                      email: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => {
+                  setCreating(false);
+                  setNewContact({
+                    nom: "",
+                    prenom: "",
+                    fonction: "",
+                    telephone: "",
+                    email: "",
+                  });
+                }}
+              >
+                Annuler
+              </Button>
+              <Button
+                size="sm"
+                className="h-8 text-xs bg-[#840404] hover:bg-[#6f0303]"
+                onClick={handleCreate}
+                disabled={savingId === "new"}
+              >
+                {savingId === "new" ? "Enregistrement..." : "Enregistrer"}
+              </Button>
             </div>
           </div>
-        ))}
-        {contacts.length===0 && !showAdd && (
-          <div className="text-center text-slate-500 py-8 border-2 border-dashed border-slate-200 rounded-lg">
-            <Users className="h-8 w-8 text-slate-400 mx-auto mb-2"/><p>Aucun contact</p>
-          </div>
         )}
-      </div>
-    </div>
+
+        {/* Liste contacts */}
+        <div className="space-y-3">
+          {contacts.map((c) => {
+            const isEditing = editingId === c.id;
+
+            return (
+              <div
+                key={c.id}
+                className="rounded-lg border border-slate-200 bg-slate-50/60 px-4 py-3 flex items-start justify-between gap-3"
+              >
+                <div className="flex-1 space-y-1.5">
+                  {isEditing ? (
+                    <>
+                      <div className="flex gap-2">
+                        <Input
+                          className="h-8 text-sm"
+                          placeholder="Nom"
+                          value={editingContact?.nom ?? ""}
+                          onChange={(e) =>
+                            setEditingContact((prev: any) => ({
+                              ...prev,
+                              nom: e.target.value,
+                            }))
+                          }
+                        />
+                        <Input
+                          className="h-8 text-sm"
+                          placeholder="Prénom"
+                          value={editingContact?.prenom ?? ""}
+                          onChange={(e) =>
+                            setEditingContact((prev: any) => ({
+                              ...prev,
+                              prenom: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <Input
+                          className="h-8 text-xs"
+                          placeholder="Fonction"
+                          value={editingContact?.fonction ?? ""}
+                          onChange={(e) =>
+                            setEditingContact((prev: any) => ({
+                              ...prev,
+                              fonction: e.target.value,
+                            }))
+                          }
+                        />
+                        <Input
+                          className="h-8 text-xs"
+                          placeholder="Téléphone"
+                          value={editingContact?.telephone ?? ""}
+                          onChange={(e) =>
+                            setEditingContact((prev: any) => ({
+                              ...prev,
+                              telephone: e.target.value,
+                            }))
+                          }
+                        />
+                        <Input
+                          className="h-8 text-xs"
+                          placeholder="Email"
+                          value={editingContact?.email ?? ""}
+                          onChange={(e) =>
+                            setEditingContact((prev: any) => ({
+                              ...prev,
+                              email: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <User className="h-3.5 w-3.5 text-slate-500" />
+                        <span className="font-medium text-sm text-slate-900">
+                          {c.prenom} {c.nom}
+                        </span>
+                        {c.fonction && (
+                          <span className="text-xs text-slate-500">
+                            • {c.fonction}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
+                        {c.telephone && (
+                          <span className="inline-flex items-center gap-1">
+                            <Phone className="h-3 w-3" />
+                            <span>{c.telephone}</span>
+                          </span>
+                        )}
+                        {c.email && (
+                          <span className="inline-flex items-center gap-1">
+                            <Mail className="h-3 w-3" />
+                            <span>{c.email}</span>
+                          </span>
+                        )}
+                        <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-slate-200 bg-white">
+                          {c.actif ? "Actif" : "Inactif"}
+                        </span>
+                      </div>
+                    </>
+                  )}
+
+                  {isEditing && (
+                    <div className="flex justify-end gap-2 pt-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-[11px]"
+                        onClick={cancelEdit}
+                      >
+                        Annuler
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="h-7 text-[11px] bg-[#840404] hover:bg-[#6f0303]"
+                        onClick={() => handleUpdate(c.id)}
+                        disabled={savingId === c.id}
+                      >
+                        {savingId === c.id
+                          ? "Enregistrement..."
+                          : "Enregistrer"}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Icônes modifier / supprimer */}
+                <div className="flex flex-col items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-100"
+                    onClick={() =>
+                      isEditing ? cancelEdit() : startEdit(c)
+                    }
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-red-100 bg-white text-red-500 hover:bg-red-50"
+                    onClick={() => handleDelete(c.id)}
+                    disabled={deletingId === c.id}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

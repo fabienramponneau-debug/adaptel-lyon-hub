@@ -1,72 +1,162 @@
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Building2, Calendar, Mail, MapPin, Phone, X } from "lucide-react";
+import { Input } from "../components/ui/input";
+import { Button } from "../components/ui/button";
+import {
+  Building2,
+  Save,
+  X,
+  Phone,
+  Mail,
+  Calendar,
+  MapPin,
+} from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
-import { useState } from "react";
 
-interface Props {
-  establishment: any; loading: boolean; saving: boolean;
-  onEstablishmentChange: (patch:any)=>void;
+type QuickActionType = "phoning" | "mailing" | "visite" | "rdv";
+
+interface EstablishmentHeaderProps {
+  establishment: any;
+  loading: boolean;
+  saving: boolean;
+  onEstablishmentChange: (updates: any) => void;
+  onSave: () => void;
   onClose: () => void;
+  onQuickAction?: (type: QuickActionType) => void;
 }
 
-export const EstablishmentHeader = ({ establishment, loading, saving, onEstablishmentChange, onClose }: Props) => {
-  const [hover, setHover] = useState(false);
+export const EstablishmentHeader = ({
+  establishment,
+  loading,
+  saving,
+  onEstablishmentChange,
+  onSave,
+  onClose,
+  onQuickAction,
+}: EstablishmentHeaderProps) => {
+  if (loading) {
+    return (
+      <div className="sticky top-0 bg-white border-b border-slate-200 p-6 z-10">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="h-16 w-16 rounded-xl bg-slate-200 animate-pulse" />
+            <div className="space-y-2">
+              <div className="h-8 w-64 bg-slate-200 rounded animate-pulse" />
+              <div className="h-6 w-32 bg-slate-200 rounded animate-pulse" />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="h-9 w-24 bg-slate-200 rounded animate-pulse" />
+            <div className="h-9 w-9 bg-slate-200 rounded animate-pulse" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-  if (loading) return (
-    <div className="sticky top-0 bg-white border-b border-slate-200 p-6 z-10">
-      <div className="h-7 w-56 bg-slate-200 rounded animate-pulse"/>
-    </div>
-  );
+  if (!establishment) return null;
+
+  const formattedDate = new Date().toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  });
 
   return (
-    <div className="sticky top-0 bg-white border-b border-slate-200 p-6 z-10" onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="h-14 w-14 rounded-xl bg-gradient-to-br from-[#840404] to-[#a00606] flex items-center justify-center shadow">
-            <Building2 className="h-7 w-7 text-white"/>
+    <div className="sticky top-0 bg-white border-b border-slate-200 p-6 z-10">
+      <div className="flex items-start justify-between gap-4">
+        {/* Bloc gauche : avatar + nom + statut dessous */}
+        <div className="flex items-start gap-4 flex-1 min-w-0">
+          <div className="h-16 w-16 rounded-xl bg-gradient-to-br from-[#840404] to-[#a00606] flex items-center justify-center shadow-lg flex-shrink-0">
+            <Building2 className="h-8 w-8 text-white" />
           </div>
-          <div className="flex-1 min-w-0">
+
+          <div className="flex flex-col flex-1 min-w-0 space-y-2">
+            {/* Nom établissement */}
             <Input
-              value={establishment?.nom || ""}
-              onChange={(e)=>onEstablishmentChange({ nom: e.target.value })}
-              className="text-3xl font-semibold border-none p-0 h-auto focus-visible:ring-0 bg-transparent"
+              value={establishment.nom || ""}
+              onChange={(e) => onEstablishmentChange({ nom: e.target.value })}
+              className="border-none p-0 h-auto text-[26px] md:text-[30px] leading-tight font-semibold tracking-tight bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 min-w-0"
               placeholder="Nom de l'établissement"
             />
-            <div className="mt-2 flex items-center gap-3">
-              <Select value={establishment?.statut || "prospect"} onValueChange={(v:any)=>onEstablishmentChange({ statut: v })}>
-                <SelectTrigger className="h-8 w-40 border-slate-300 bg-white"><SelectValue/></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="prospect">Prospect</SelectItem>
-                  <SelectItem value="client">Client</SelectItem>
-                  <SelectItem value="ancien_client">Ancien client</SelectItem>
-                </SelectContent>
-              </Select>
-              {establishment?.statut && <StatusBadge status={establishment.statut} size="sm" />}
-              {saving && <span className="text-xs text-slate-500">Sauvegarde…</span>}
-            </div>
+
+            {/* Statut sous le nom */}
+            {establishment.statut && (
+              <div className="flex items-center gap-2">
+                <StatusBadge
+                  status={
+                    establishment.statut as
+                      | "prospect"
+                      | "client"
+                      | "ancien_client"
+                  }
+                  size="sm"
+                />
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* actions rapides (sobre dans cercles) */}
-          <div className="hidden md:flex items-center gap-2 mr-2">
-            <div title="Phoning" className="h-9 w-9 rounded-full border border-slate-200 flex items-center justify-center hover:bg-slate-50">
-              <Phone className="h-4 w-4 text-slate-700"/>
+        {/* Bloc droit : actions + sauvegarde + date en dessous */}
+        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            {/* Actions rapides */}
+            <div className="hidden md:flex items-center gap-2 mr-2">
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
+                title="Phoning"
+                onClick={() => onQuickAction && onQuickAction("phoning")}
+              >
+                <Phone className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
+                title="Mailing"
+                onClick={() => onQuickAction && onQuickAction("mailing")}
+              >
+                <Mail className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
+                title="Visite terrain"
+                onClick={() => onQuickAction && onQuickAction("visite")}
+              >
+                <MapPin className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
+                title="Rendez-vous"
+                onClick={() => onQuickAction && onQuickAction("rdv")}
+              >
+                <Calendar className="h-4 w-4" />
+              </button>
             </div>
-            <div title="Mailing" className="h-9 w-9 rounded-full border border-slate-200 flex items-center justify-center hover:bg-slate-50">
-              <Mail className="h-4 w-4 text-slate-700"/>
-            </div>
-            <div title="Visite terrain" className="h-9 w-9 rounded-full border border-slate-200 flex items-center justify-center hover:bg-slate-50">
-              <MapPin className="h-4 w-4 text-slate-700"/>
-            </div>
-            <div title="Rendez-vous" className="h-9 w-9 rounded-full border border-slate-200 flex items-center justify-center hover:bg-slate-50">
-              <Calendar className="h-4 w-4 text-slate-700"/>
-            </div>
+
+            <Button
+              onClick={onSave}
+              disabled={saving}
+              className="gap-2 bg-[#840404] hover:bg-[#730303] shadow-sm"
+            >
+              <Save className="h-4 w-4" />
+              {saving ? "Sauvegarde..." : "Sauvegarder"}
+            </Button>
+
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={onClose}
+              className="border-slate-300 shadow-sm"
+            >
+              <X className="h-4 w-4" />
+            </Button>
           </div>
-          <button onClick={onClose} className="h-9 w-9 rounded-md border border-slate-300 flex items-center justify-center hover:bg-slate-50" aria-label="Fermer">
-            <X className="h-4 w-4"/>
-          </button>
+
+          {/* Date modifié sous le bouton Sauvegarder */}
+          <span className="text-slate-400 text-xs md:text-sm">
+            Modifié le {formattedDate}
+          </span>
         </div>
       </div>
     </div>
