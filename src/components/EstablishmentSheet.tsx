@@ -165,7 +165,7 @@ export const EstablishmentSheet = ({
     setActions(a || []);
   }
 
-  // AUTOSAVE (debounced) – uniquement en mode édition (pas en création)
+  // AUTOSAVE (debounced) – uniquement en mode édition
   const saveTimer = useRef<number | null>(null);
   const scheduleSave = useCallback(
     async (payload: any) => {
@@ -177,8 +177,7 @@ export const EstablishmentSheet = ({
 
         const full: any = { ...payload };
 
-        // Gestion coefficient : on ne touche pas aux colonnes Supabase gérées par Lovable,
-        // on enregistre dans competitors_history.
+        // Gestion coefficient : on n'écrit pas sur establishments mais sur competitors_history
         let coefficientForHistory: number | null = null;
         const hasCoeff = Object.prototype.hasOwnProperty.call(
           full,
@@ -199,11 +198,9 @@ export const EstablishmentSheet = ({
               ? null
               : parsed;
           }
-          // On ne l'envoie pas sur establishments (colonne probablement inexistante)
           delete full.coefficient_concurrent;
         }
 
-        // Update "classique" sur establishments (sans coefficient)
         if (Object.keys(full).length > 0) {
           await supabase
             .from("establishments")
@@ -211,7 +208,6 @@ export const EstablishmentSheet = ({
             .eq("id", model.id);
         }
 
-        // Historisation concurrent si coefficient ou info concurrent modifiés
         if (hasCoeff || hasInfo) {
           const today = new Date();
           const yyyy = today.getFullYear();
@@ -241,7 +237,6 @@ export const EstablishmentSheet = ({
 
   const onChange = (patch: any) => {
     setModel((prev: any) => (prev ? { ...prev, ...patch } : prev));
-    // pas d'autosave en mode création
     if (!isCreateMode) {
       scheduleSave(patch);
     }
@@ -271,6 +266,7 @@ export const EstablishmentSheet = ({
     const {
       data: { user },
     } = await supabase.auth.getUser();
+    if (!user) return;
 
     const today = new Date();
     const yyyy = today.getFullYear();
@@ -284,7 +280,7 @@ export const EstablishmentSheet = ({
       date_action: dateStr,
       statut_action: "a_venir" as const,
       commentaire: null,
-      user_id: user?.id ?? "",
+      user_id: user.id,
     };
 
     const { data, error } = await supabase
@@ -294,6 +290,7 @@ export const EstablishmentSheet = ({
 
     if (!error && data && data.length > 0) {
       const inserted = data[0];
+      // On fixe l'ID pour ouvrir en édition dans la timeline
       setExternalEditActionId(inserted.id);
       await fetchActionsOnly();
     } else {
@@ -360,7 +357,7 @@ export const EstablishmentSheet = ({
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-[520px,1fr] gap-6">
-              {/* Colonne gauche (infos + contacts + concurrence) */}
+              {/* Colonne gauche */}
               <div className="space-y-6">
                 {/* Informations */}
                 <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
@@ -605,13 +602,18 @@ export const EstablishmentSheet = ({
 
               {/* Colonne droite : timeline */}
               <div className="space-y-6">
-                <EstablishmentTimeline
-                  actions={actions}
-                  loading={loading}
-                  establishmentId={establishmentId || model.id || ""}
-                  onChanged={fetchActionsOnly}
-                  externalEditActionId={externalEditActionId}
-                />
+                {establishmentId && (
+                  <EstablishmentTimeline
+                    actions={actions}
+                    loading={loading}
+                    establishmentId={establishmentId}
+                    onChanged={fetchActionsOnly}
+                    externalEditActionId={externalEditActionId}
+                    onResetExternalEdit={() =>
+                      setExternalEditActionId(null)
+                    }
+                  />
+                )}
               </div>
             </div>
           )}

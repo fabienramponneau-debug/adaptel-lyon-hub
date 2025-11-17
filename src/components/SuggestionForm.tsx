@@ -31,8 +31,13 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     titre: "",
+    ville: "",
     description: "",
-    type: "suggestion" as "suggestion" | "idee" | "prospect_a_verifier" | "info_commerciale",
+    type: "suggestion" as
+      | "suggestion"
+      | "idee"
+      | "prospect_a_verifier"
+      | "info_commerciale",
     priorite: "normale" as "basse" | "normale" | "haute",
   });
 
@@ -40,7 +45,9 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
     e.preventDefault();
     setLoading(true);
 
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) {
       toast({
         variant: "destructive",
@@ -51,9 +58,18 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
       return;
     }
 
+    // On préfixe la description avec la ville pour ne pas toucher au schéma Supabase
+    const descriptionFinale =
+      (formData.ville
+        ? `[${formData.ville.trim()}] `
+        : "") + (formData.description || "");
+
     const { error } = await supabase.from("suggestions").insert({
       titre: formData.titre,
-      description: formData.description || null,
+      description:
+        descriptionFinale.trim() === ""
+          ? null
+          : descriptionFinale.trim(),
       type: formData.type,
       priorite: formData.priorite,
       created_by: user.id,
@@ -73,6 +89,7 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
       setOpen(false);
       setFormData({
         titre: "",
+        ville: "",
         description: "",
         type: "suggestion",
         priorite: "normale",
@@ -86,23 +103,41 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button className="gap-2">
-          <Plus className="h-4 w-4" />
-          Nouvelle suggestion
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 rounded-full border border-slate-200 hover:bg-slate-50"
+        >
+          <Plus className="h-4 w-4 text-[#840404]" />
+          <span className="sr-only">Nouvelle suggestion</span>
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Créer une suggestion</DialogTitle>
+          <DialogTitle>Nouvelle suggestion</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <Label>Titre *</Label>
+            <Label>Nom client *</Label>
             <Input
               required
               value={formData.titre}
-              onChange={(e) => setFormData({ ...formData, titre: e.target.value })}
-              placeholder="Titre de la suggestion"
+              onChange={(e) =>
+                setFormData({ ...formData, titre: e.target.value })
+              }
+              placeholder="Nom de l'établissement"
+            />
+          </div>
+
+          <div>
+            <Label>Ville (optionnel)</Label>
+            <Input
+              value={formData.ville}
+              onChange={(e) =>
+                setFormData({ ...formData, ville: e.target.value })
+              }
+              placeholder="Ville"
             />
           </div>
 
@@ -110,7 +145,9 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
             <Label>Type *</Label>
             <Select
               value={formData.type}
-              onValueChange={(value: any) => setFormData({ ...formData, type: value })}
+              onValueChange={(value: any) =>
+                setFormData({ ...formData, type: value })
+              }
             >
               <SelectTrigger>
                 <SelectValue />
@@ -118,8 +155,12 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
               <SelectContent>
                 <SelectItem value="suggestion">Suggestion</SelectItem>
                 <SelectItem value="idee">Idée</SelectItem>
-                <SelectItem value="prospect_a_verifier">Prospect à vérifier</SelectItem>
-                <SelectItem value="info_commerciale">Info commerciale</SelectItem>
+                <SelectItem value="prospect_a_verifier">
+                  Prospect à vérifier
+                </SelectItem>
+                <SelectItem value="info_commerciale">
+                  Info commerciale
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -128,7 +169,9 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
             <Label>Priorité *</Label>
             <Select
               value={formData.priorite}
-              onValueChange={(value: any) => setFormData({ ...formData, priorite: value })}
+              onValueChange={(value: any) =>
+                setFormData({ ...formData, priorite: value })
+              }
             >
               <SelectTrigger>
                 <SelectValue />
@@ -142,16 +185,25 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
           </div>
 
           <div>
-            <Label>Description</Label>
+            <Label>Commentaire</Label>
             <Textarea
               value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              placeholder="Détails de la suggestion..."
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  description: e.target.value,
+                })
+              }
+              placeholder="Commentaire / contexte..."
               rows={4}
             />
           </div>
 
-          <Button type="submit" disabled={loading} className="w-full">
+          <Button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-[#840404] hover:bg-[#6f0303]"
+          >
             {loading ? "Création..." : "Créer"}
           </Button>
         </form>

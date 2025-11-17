@@ -33,6 +33,7 @@ interface EstablishmentTimelineProps {
   establishmentId: string;
   onChanged: () => Promise<void>;
   externalEditActionId?: string | null;
+  onResetExternalEdit?: () => void;
 }
 
 export const EstablishmentTimeline = ({
@@ -41,6 +42,7 @@ export const EstablishmentTimeline = ({
   establishmentId,
   onChanged,
   externalEditActionId,
+  onResetExternalEdit,
 }: EstablishmentTimelineProps) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingComment, setEditingComment] = useState("");
@@ -50,16 +52,22 @@ export const EstablishmentTimeline = ({
   const [savingId, setSavingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // Ouverture en édition depuis une action rapide
+  // Ouverture auto en édition pour les actions rapides
   useEffect(() => {
     if (!externalEditActionId) return;
     const action = actions.find((a) => a.id === externalEditActionId);
     if (!action) return;
+
     setEditingId(action.id);
     setEditingComment(action.commentaire ?? "");
     setEditingStatus(action.statut_action ?? "a_venir");
     setEditingDate(action.date_action ?? "");
-  }, [externalEditActionId, actions]);
+
+    // On consomme l'ID externe une fois utilisé
+    if (onResetExternalEdit) {
+      onResetExternalEdit();
+    }
+  }, [externalEditActionId, actions, onResetExternalEdit]);
 
   const getActionConfig = (type: string) => {
     const configs = {
@@ -73,11 +81,11 @@ export const EstablishmentTimeline = ({
       },
       visite: {
         icon: MapPin,
-        label: "Visite terrain",
+        label: "Visite", // au lieu de "Visite terrain"
       },
       rdv: {
         icon: Calendar,
-        label: "Rendez-vous",
+        label: "Rdv", // au lieu de "Rendez-vous"
       },
     } as const;
 
@@ -113,9 +121,9 @@ export const EstablishmentTimeline = ({
     );
   };
 
-  // Affichage date FR, sans heure
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return dateString;
     return date.toLocaleDateString("fr-FR", {
       weekday: "long",
       day: "numeric",
@@ -150,13 +158,13 @@ export const EstablishmentTimeline = ({
       } as any)
       .eq("id", id)
       .eq("etablissement_id", establishmentId);
+
     setSavingId(null);
-    cancelEdit();
-    await onChanged();
+    cancelEdit(); // on ferme les champs
+    await onChanged(); // refresh propre
   };
 
   const handleDelete = async (id: string) => {
-    // PAS de popup système, suppression directe
     setDeletingId(id);
     await supabase
       .from("actions")
@@ -247,18 +255,10 @@ export const EstablishmentTimeline = ({
 
               return (
                 <div key={action.id} className="flex gap-4 items-stretch">
-                  {/* Colonne timeline : rond centré verticalement */}
+                  {/* Colonne timeline : ligne continue + point centré */}
                   <div className="relative flex flex-col items-center w-6">
-                    {/* Ligne supérieure */}
-                    {index > 0 && (
-                      <div className="absolute top-0 bottom-1/2 w-px bg-slate-200" />
-                    )}
-                    {/* Ligne inférieure */}
-                    {index < actions.length - 1 && (
-                      <div className="absolute top-1/2 bottom-0 w-px bg-slate-200" />
-                    )}
-                    {/* Rond au centre */}
-                    <div className="w-2 h-2 rounded-full bg-slate-300 z-10 mt-[50%] -translate-y-1/2" />
+                    <div className="absolute top-0 bottom-0 w-px bg-slate-200" />
+                    <div className="w-2 h-2 rounded-full bg-slate-400 relative z-10" />
                   </div>
 
                   {/* Vignette action */}
