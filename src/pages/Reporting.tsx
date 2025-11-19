@@ -2,99 +2,165 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import {
   Users,
   AlertCircle,
-  UserX,
-  UserCheck,
-  MapPin,
+  Target,
+  TrendingUp,
+  Calendar,
+  BarChart3,
   Activity,
-  CalendarRange,
+  MapPin,
+  Building,
+  Utensils,
+  Coffee,
+  ChartBar,
+  PieChart,
+  Filter,
+  Phone,
+  Mail,
+  Clock,
+  CheckCircle2,
 } from "lucide-react";
 import {
+  ResponsiveContainer,
   BarChart,
   Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
-  LineChart,
   Line,
+  ComposedChart,
+  Cell,
+  PieChart as RechartsPieChart,
+  Pie,
+  Legend,
 } from "recharts";
-import {
-  format,
-  subWeeks,
-  startOfWeek,
-  endOfWeek,
-  subMonths,
-  startOfMonth,
-  endOfMonth,
-} from "date-fns";
+import { format, subWeeks, startOfWeek, endOfWeek, subMonths, startOfMonth, endOfMonth } from "date-fns";
 import { fr } from "date-fns/locale";
 
 interface Stats {
   totalProspects: number;
   inactiveProspects: number;
   anciensClients: number;
-  triggeredClients: number;
+  totalClients: number;
+  conversionRate: number;
+  totalEstablishments: number;
 }
 
 type ActionType = "phoning" | "mailing" | "visite" | "rdv";
+type EstablishmentFilter = "tout" | "prospect" | "client" | "ancien_client";
+type TimeRange = "4weeks" | "3months";
 
-interface WeeklyPoint {
-  name: string; // S45, S46...
+interface WeeklyData {
+  name: string;
+  semaine: string;
   phoning: number;
   mailing: number;
   visite: number;
   rdv: number;
+  objectif: number;
 }
 
-interface MonthlyPoint {
-  name: string; // Nov, Déc...
-  phoning: number;
-  mailing: number;
-  visite: number;
-  rdv: number;
+interface ActivityData {
+  name: string;
+  value: number;
+  color: string;
+  pourcentage: number;
 }
+
+interface CityData {
+  name: string;
+  count: number;
+  pourcentage: number;
+}
+
+interface PerformanceMetric {
+  label: string;
+  value: number;
+  target: number;
+  progress: number;
+  icon: any;
+  color: string;
+}
+
+const COLORS = {
+  primary: '#840404',
+  secondary: '#1e293b',
+  accent: '#dc2626',
+  success: '#16a34a',
+  warning: '#d97706',
+  info: '#2563eb',
+  
+  // Couleurs pour les activités
+  hotellerie: '#840404',
+  restauration: '#dc2626',
+  restauration_collective: '#f59e0b',
+  
+  // Couleurs pour les actions
+  phoning: '#3b82f6',
+  mailing: '#8b5cf6',
+  visite: '#840404',
+  rdv: '#16a34a',
+};
+
+const ACTIVITY_COLORS = ['#840404', '#dc2626', '#f59e0b', '#2563eb', '#16a34a', '#8b5cf6'];
 
 const Reporting = () => {
   const [stats, setStats] = useState<Stats>({
     totalProspects: 0,
     inactiveProspects: 0,
     anciensClients: 0,
-    triggeredClients: 0,
+    totalClients: 0,
+    conversionRate: 0,
+    totalEstablishments: 0,
   });
 
   const [selectedAction, setSelectedAction] = useState<ActionType>("visite");
-
-  const [weeklyActions, setWeeklyActions] = useState<WeeklyPoint[]>([]);
-  const [weeklyOffset, setWeeklyOffset] = useState(0); // 0 = 4 dernières semaines, 1 = 4 semaines précédentes, etc.
-
-  const [monthlyActions, setMonthlyActions] = useState<MonthlyPoint[]>([]);
-  const [monthOffset, setMonthOffset] = useState(0); // 0 = 12 derniers mois, 1 = 12 mois précédents
-
-  const [establishmentsBySector, setEstablishmentsBySector] = useState<any[]>([]);
-  const [establishmentsByCity, setEstablishmentsByCity] = useState<any[]>([]);
-
-  useEffect(() => {
-    fetchStats();
-  }, []);
-
-  useEffect(() => {
-    fetchWeeklyActions(weeklyOffset);
-  }, [weeklyOffset]);
+  const [timeRange, setTimeRange] = useState<TimeRange>("4weeks");
+  const [activityFilter, setActivityFilter] = useState<EstablishmentFilter>("tout");
+  const [cityFilter, setCityFilter] = useState<EstablishmentFilter>("tout");
+  const [weeklyData, setWeeklyData] = useState<WeeklyData[]>([]);
+  const [activityData, setActivityData] = useState<ActivityData[]>([]);
+  const [cityData, setCityData] = useState<CityData[]>([]);
+  const [allActionsData, setAllActionsData] = useState<WeeklyData[]>([]);
+  const [performanceMetrics, setPerformanceMetrics] = useState<PerformanceMetric[]>([]);
+  const [isLoading, setIsLoading] = useState({
+    main: true,
+    activity: false,
+    city: false
+  });
 
   useEffect(() => {
-    fetchMonthlyActions(monthOffset);
-  }, [monthOffset]);
+    fetchInitialData();
+  }, [timeRange]);
 
   useEffect(() => {
-    fetchEstablishmentsBySector();
-    fetchEstablishmentsByCity();
-  }, []);
+    if (!isLoading.main) {
+      fetchActivityData();
+    }
+  }, [activityFilter]);
 
-  // ---------- STATS GLOBAL ----------
+  useEffect(() => {
+    if (!isLoading.main) {
+      fetchCityData();
+    }
+  }, [cityFilter]);
+
+  const fetchInitialData = async () => {
+    setIsLoading(prev => ({ ...prev, main: true }));
+    await Promise.all([
+      fetchStats(),
+      fetchWeeklyData(),
+      fetchAllActionsData(),
+      fetchActivityData(),
+      fetchCityData(),
+      fetchPerformanceMetrics(),
+    ]);
+    setIsLoading(prev => ({ ...prev, main: false }));
+  };
 
   const fetchStats = async () => {
     const { data: establishments } = await supabase
@@ -104,9 +170,9 @@ const Reporting = () => {
     if (!establishments) return;
 
     const prospects = establishments.filter((e) => e.statut === "prospect");
+    const clients = establishments.filter((e) => e.statut === "client");
     const anciens = establishments.filter((e) => e.statut === "ancien_client");
 
-    // Prospects inactifs = sans action depuis 90 jours
     const ninetyDaysAgo = new Date();
     ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
 
@@ -121,23 +187,136 @@ const Reporting = () => {
 
     const inactive = prospects.filter((p) => !activeEstablishmentIds.has(p.id));
 
-    // Clients déclenchés : pour l'instant 0 => on mettra un vrai calcul quand on aura un tracking dédié
-    const triggeredClients = 0;
+    const conversionRate = clients.length > 0 ? (clients.length / establishments.length) * 100 : 0;
 
     setStats({
       totalProspects: prospects.length,
       inactiveProspects: inactive.length,
       anciensClients: anciens.length,
-      triggeredClients,
+      totalClients: clients.length,
+      conversionRate: Math.round(conversionRate * 100) / 100,
+      totalEstablishments: establishments.length,
     });
   };
 
-  // ---------- ACTIONS HEBDO (4 semaines) ----------
+  const fetchWeeklyData = async () => {
+    const weeks: WeeklyData[] = [];
+    const weekCount = timeRange === "4weeks" ? 4 : 12;
 
-  const fetchWeeklyActions = async (offset: number) => {
-    // 4 semaines par vue, avec un décalage par "offset"
-    const weeks: WeeklyPoint[] = [];
-    for (let i = 3 + offset * 4; i >= offset * 4; i--) {
+    for (let i = weekCount - 1; i >= 0; i--) {
+      const baseDate = subWeeks(new Date(), i);
+      const weekStart = startOfWeek(baseDate, { locale: fr });
+      const weekEnd = endOfWeek(baseDate, { locale: fr });
+
+      const { data } = await supabase
+        .from("actions")
+        .select("type")
+        .gte("date_action", format(weekStart, "yyyy-MM-dd"))
+        .lte("date_action", format(weekEnd, "yyyy-MM-dd"));
+
+      const visiteCount = data?.filter((a) => a.type === "visite").length || 0;
+      const phoningCount = data?.filter((a) => a.type === "phoning").length || 0;
+      const mailingCount = data?.filter((a) => a.type === "mailing").length || 0;
+      const rdvCount = data?.filter((a) => a.type === "rdv").length || 0;
+
+      const objectifs = {
+        phoning: 20,
+        mailing: 15,
+        visite: 4,
+        rdv: 8,
+      };
+
+      weeks.push({
+        name: `S${format(weekStart, "w", { locale: fr })}`,
+        semaine: format(weekStart, "dd MMM", { locale: fr }),
+        visite: visiteCount,
+        phoning: phoningCount,
+        mailing: mailingCount,
+        rdv: rdvCount,
+        objectif: objectifs[selectedAction],
+      });
+    }
+
+    setWeeklyData(weeks);
+  };
+
+  const fetchActivityData = async () => {
+    setIsLoading(prev => ({ ...prev, activity: true }));
+    
+    const { data: activites } = await supabase
+      .from("parametrages")
+      .select("id, valeur")
+      .eq("categorie", "activite");
+
+    if (!activites) return;
+
+    let query = supabase.from("establishments").select("activite_id, statut");
+    
+    if (activityFilter !== "tout") {
+      query = query.eq("statut", activityFilter);
+    }
+
+    const { data: establishments } = await query;
+
+    const activityCounts: { [key: string]: number } = {};
+    
+    establishments?.forEach(est => {
+      if (est.activite_id) {
+        const activityName = activites.find(a => a.id === est.activite_id)?.valeur || 'Non renseigné';
+        activityCounts[activityName] = (activityCounts[activityName] || 0) + 1;
+      }
+    });
+
+    const total = establishments?.length || 1;
+    const activityData: ActivityData[] = activites.map((activite, index) => ({
+      name: activite.valeur,
+      value: activityCounts[activite.valeur] || 0,
+      color: ACTIVITY_COLORS[index % ACTIVITY_COLORS.length],
+      pourcentage: Math.round(((activityCounts[activite.valeur] || 0) / total) * 100)
+    })).filter(item => item.value > 0);
+
+    setActivityData(activityData);
+    setIsLoading(prev => ({ ...prev, activity: false }));
+  };
+
+  const fetchCityData = async () => {
+    setIsLoading(prev => ({ ...prev, city: true }));
+    
+    let query = supabase.from("establishments").select("ville, statut");
+    
+    if (cityFilter !== "tout") {
+      query = query.eq("statut", cityFilter);
+    }
+
+    const { data: establishments } = await query;
+
+    const cityCounts: { [key: string]: number } = {};
+    
+    establishments?.forEach(est => {
+      if (est.ville) {
+        cityCounts[est.ville] = (cityCounts[est.ville] || 0) + 1;
+      }
+    });
+
+    const total = establishments?.length || 1;
+    const cityData: CityData[] = Object.entries(cityCounts)
+      .map(([name, count]) => ({
+        name,
+        count,
+        pourcentage: Math.round((count / total) * 100)
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+
+    setCityData(cityData);
+    setIsLoading(prev => ({ ...prev, city: false }));
+  };
+
+  const fetchAllActionsData = async () => {
+    const weeks: WeeklyData[] = [];
+    const weekCount = timeRange === "4weeks" ? 4 : 12;
+
+    for (let i = weekCount - 1; i >= 0; i--) {
       const baseDate = subWeeks(new Date(), i);
       const weekStart = startOfWeek(baseDate, { locale: fr });
       const weekEnd = endOfWeek(baseDate, { locale: fr });
@@ -155,450 +334,572 @@ const Reporting = () => {
 
       weeks.push({
         name: `S${format(weekStart, "w", { locale: fr })}`,
+        semaine: format(weekStart, "dd MMM", { locale: fr }),
         visite: visiteCount,
         phoning: phoningCount,
         mailing: mailingCount,
         rdv: rdvCount,
+        objectif: 0,
       });
     }
 
-    setWeeklyActions(weeks);
+    setAllActionsData(weeks);
   };
 
-  // ---------- ACTIONS MENSUELLES (12 mois) ----------
+  const fetchPerformanceMetrics = async () => {
+    // Métriques de performance simulées - à adapter avec vos vraies données
+    const metrics: PerformanceMetric[] = [
+      {
+        label: "Visites terrain",
+        value: 12,
+        target: 16,
+        progress: 75,
+        icon: MapPin,
+        color: COLORS.primary
+      },
+      {
+        label: "Rendez-vous",
+        value: 18,
+        target: 20,
+        progress: 90,
+        icon: Clock,
+        color: COLORS.success
+      },
+      {
+        label: "Appels effectués",
+        value: 45,
+        target: 50,
+        progress: 90,
+        icon: Phone,
+        color: COLORS.info
+      },
+      {
+        label: "Emails envoyés",
+        value: 22,
+        target: 30,
+        progress: 73,
+        icon: Mail,
+        color: COLORS.phoning
+      }
+    ];
 
-  const fetchMonthlyActions = async (offset: number) => {
-    // 12 mois glissants, décalés par offset
-    const endRef = endOfMonth(subMonths(new Date(), offset * 12));
-    const startRef = startOfMonth(subMonths(endRef, 11));
+    setPerformanceMetrics(metrics);
+  };
 
-    const { data } = await supabase
-      .from("actions")
-      .select("type, date_action")
-      .gte("date_action", format(startRef, "yyyy-MM-dd"))
-      .lte("date_action", format(endRef, "yyyy-MM-dd"));
+  const getFilterLabel = (filter: EstablishmentFilter): string => {
+    const labels = {
+      tout: "Tout le portefeuille",
+      prospect: "Prospects uniquement",
+      client: "Clients uniquement",
+      ancien_client: "Anciens clients uniquement"
+    };
+    return labels[filter];
+  };
 
-    if (!data) {
-      setMonthlyActions([]);
-      return;
+  const getActivityIcon = (activity: string) => {
+    const icons: { [key: string]: any } = {
+      'Hôtellerie': Building,
+      'Restauration': Utensils,
+      'Restauration collective': Coffee,
+    };
+    return icons[activity] || Building;
+  };
+
+  // Custom YAxis tick formatter pour entiers uniquement
+  const integerTickFormatter = (value: number) => {
+    return Math.round(value).toString();
+  };
+
+  // Custom tooltips
+  const ActionTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-white p-3 border border-slate-200 rounded-lg shadow-sm">
+          <p className="font-semibold text-slate-900">{label}</p>
+          <p className="text-sm text-slate-600">
+            <span style={{ color: COLORS[selectedAction] }}>
+              {Math.round(payload[0].value)} {selectedAction === 'visite' ? 'visites' : selectedAction === 'rdv' ? 'rendez-vous' : selectedAction + 's'}
+            </span>
+          </p>
+          <p className="text-sm text-amber-600">
+            Objectif: {Math.round(payload[1]?.value)}
+          </p>
+        </div>
+      );
     }
+    return null;
+  };
 
-    const map = new Map<string, MonthlyPoint>();
-
-    // init sur 12 mois
-    for (let i = 11; i >= 0; i--) {
-      const d = subMonths(endRef, i);
-      const key = format(d, "yyyy-MM");
-      map.set(key, {
-        name: format(d, "MMM yy", { locale: fr }),
-        phoning: 0,
-        mailing: 0,
-        visite: 0,
-        rdv: 0,
-      });
+  const AllActionsTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-white p-3 border border-slate-200 rounded-lg shadow-sm min-w-[200px]">
+          <p className="font-semibold text-slate-900 mb-2">{label}</p>
+          {payload.map((entry: any, index: number) => (
+            <p key={index} className="text-sm" style={{ color: entry.color }}>
+              {entry.name === 'phoning' && 'Phoning'}
+              {entry.name === 'mailing' && 'Mailing'}
+              {entry.name === 'visite' && 'Visites'}
+              {entry.name === 'rdv' && 'Rendez-vous'}: {Math.round(entry.value)}
+            </p>
+          ))}
+        </div>
+      );
     }
-
-    data.forEach((a) => {
-      const d = new Date(a.date_action);
-      const key = format(d, "yyyy-MM");
-      const existing = map.get(key);
-      if (!existing) return;
-      if (a.type === "phoning") existing.phoning += 1;
-      if (a.type === "mailing") existing.mailing += 1;
-      if (a.type === "visite") existing.visite += 1;
-      if (a.type === "rdv") existing.rdv += 1;
-    });
-
-    setMonthlyActions(Array.from(map.values()));
+    return null;
   };
 
-  // ---------- ETABLISSEMENTS PAR SECTEUR / VILLE ----------
+  const ActivityTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-white p-3 border border-slate-200 rounded-lg shadow-sm">
+          <p className="font-semibold text-slate-900">{label}</p>
+          <p className="text-sm text-slate-600">
+            {Math.round(payload[0].value)} établissements
+          </p>
+          <p className="text-sm text-slate-500">
+            {payload[0].payload.pourcentage}% du portefeuille
+          </p>
+        </div>
+      );
+    }
+    return null;
+  };
 
-  const fetchEstablishmentsBySector = async () => {
-    const { data } = await supabase
-      .from("establishments")
-      .select("secteur:secteur_id(valeur)");
+  const CityTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-white p-3 border border-slate-200 rounded-lg shadow-sm">
+          <p className="font-semibold text-slate-900">{label}</p>
+          <p className="text-sm text-slate-600">
+            {Math.round(payload[0].value)} établissements
+          </p>
+          <p className="text-sm text-slate-500">
+            {payload[0].payload.pourcentage}% du portefeuille
+          </p>
+        </div>
+      );
+    }
+    return null;
+  };
 
-    if (!data) return;
-
-    const counts: Record<string, number> = {};
-    data.forEach((e: any) => {
-      const sector = e.secteur?.valeur || "Non défini";
-      counts[sector] = (counts[sector] || 0) + 1;
-    });
-
-    setEstablishmentsBySector(
-      Object.entries(counts).map(([name, value]) => ({ name, value }))
+  if (isLoading.main) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <Activity className="h-8 w-8 animate-spin text-[#840404] mx-auto mb-4" />
+          <p className="text-slate-600">Chargement des données...</p>
+        </div>
+      </div>
     );
-  };
-
-  const fetchEstablishmentsByCity = async () => {
-    const { data } = await supabase.from("establishments").select("ville");
-
-    if (!data) return;
-
-    const counts: Record<string, number> = {};
-    data.forEach((e) => {
-      const city = e.ville || "Non défini";
-      counts[city] = (counts[city] || 0) + 1;
-    });
-
-    setEstablishmentsByCity(
-      Object.entries(counts)
-        .map(([name, value]) => ({ name, value }))
-        .sort((a: any, b: any) => b.value - a.value)
-        .slice(0, 6)
-    );
-  };
-
-  // ---------- HELPERS UI ----------
-
-  const actionLabelMap: Record<ActionType, string> = {
-    phoning: "Phoning",
-    mailing: "Mailing",
-    visite: "Visites terrain",
-    rdv: "Rendez-vous",
-  };
-
-  const getActionKey = (type: ActionType) => {
-    if (type === "phoning") return "phoning";
-    if (type === "mailing") return "mailing";
-    if (type === "visite") return "visite";
-    return "rdv";
-  };
-
-  const weeklyDataForSelected = weeklyActions.map((w) => ({
-    name: w.name,
-    value: w[getActionKey(selectedAction) as keyof WeeklyPoint] as number,
-  }));
-
-  const monthlyDataForSelected = monthlyActions.map((m) => ({
-    name: m.name,
-    value: m[selectedAction],
-  }));
-
-  const canGoNextWeek = weeklyOffset > 0;
-  const canGoNextMonth = monthOffset > 0;
+  }
 
   return (
-    <div className="space-y-6">
-      {/* Titre page */}
-      <div className="flex flex-col gap-1">
-        <h1 className="text-[28px] font-semibold text-slate-900 flex items-center gap-2">
-          <Activity className="h-6 w-6 text-[#840404]" />
-          Reporting commercial
-        </h1>
-        <p className="text-sm text-slate-500">
-          Pilotage de l&apos;activité : portefeuille, prospection et visites.
-        </p>
+    <div className="space-y-8 p-6">
+      {/* En-tête */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-[#840404]/10 rounded-lg">
+              <ChartBar className="h-6 w-6 text-[#840404]" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">Tableau de Bord Commercial</h1>
+              <p className="text-slate-600">Analyse et pilotage de l'activité commerciale</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Badge variant="outline" className="bg-white">
+              <Calendar className="h-3 w-3 mr-1" />
+              {timeRange === "4weeks" ? "4 semaines" : "3 mois"}
+            </Badge>
+          </div>
+        </div>
       </div>
 
-      {/* KPI cards */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card className="border-slate-200">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-xs font-medium text-slate-500">
-              Prospects totaux
-            </CardTitle>
-            <Users className="h-4 w-4 text-slate-400" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold text-slate-900">
-              {stats.totalProspects}
-            </div>
-            <p className="text-xs text-slate-500">
-              Établissements en statut prospect
-            </p>
-          </CardContent>
-        </Card>
+      {/* SECTION 1: KPIs PRINCIPAUX */}
+      <section>
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+          <Card className="border-slate-200 bg-white">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-600">Portefeuille Total</p>
+                  <p className="text-2xl font-bold text-slate-900 mt-1">
+                    {stats.totalEstablishments}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {stats.totalProspects} prospects • {stats.totalClients} clients
+                  </p>
+                </div>
+                <div className="p-3 bg-[#840404]/10 rounded-lg">
+                  <Users className="h-6 w-6 text-[#840404]" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-        <Card className="border-slate-200">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-xs font-medium text-slate-500">
-              Prospects inactifs
-            </CardTitle>
-            <AlertCircle className="h-4 w-4 text-amber-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold text-slate-900">
-              {stats.inactiveProspects}
-            </div>
-            <p className="text-xs text-slate-500">
-              Sans action depuis 90&nbsp;jours
-            </p>
-          </CardContent>
-        </Card>
+          <Card className="border-slate-200 bg-white">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-600">Taux de Conversion</p>
+                  <p className="text-2xl font-bold text-slate-900 mt-1">
+                    {stats.conversionRate}%
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Prospects → Clients
+                  </p>
+                </div>
+                <div className="p-3 bg-green-100 rounded-lg">
+                  <TrendingUp className="h-6 w-6 text-green-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-        <Card className="border-slate-200">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-xs font-medium text-slate-500">
-              Anciens clients
-            </CardTitle>
-            <UserX className="h-4 w-4 text-slate-400" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold text-slate-900">
-              {stats.anciensClients}
-            </div>
-            <p className="text-xs text-slate-500">
-              Portefeuille à réactiver ou à analyser
-            </p>
-          </CardContent>
-        </Card>
+          <Card className="border-slate-200 bg-white">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-600">Attention Requise</p>
+                  <p className="text-2xl font-bold text-slate-900 mt-1">
+                    {stats.inactiveProspects}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Prospects inactifs
+                  </p>
+                </div>
+                <div className="p-3 bg-amber-100 rounded-lg">
+                  <AlertCircle className="h-6 w-6 text-amber-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-        <Card className="border-slate-200">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-xs font-medium text-slate-500">
-              Clients déclenchés
-            </CardTitle>
-            <UserCheck className="h-4 w-4 text-emerald-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold text-slate-900">
-              {stats.triggeredClients}
-            </div>
-            <p className="text-xs text-slate-500">
-              À alimenter dès qu&apos;on aura le suivi &quot;déclenché&quot;
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+          <Card className="border-slate-200 bg-white">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-600">Anciens Clients</p>
+                  <p className="text-2xl font-bold text-slate-900 mt-1">
+                    {stats.anciensClients}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Potentiel de reconquête
+                  </p>
+                </div>
+                <div className="p-3 bg-blue-100 rounded-lg">
+                  <Target className="h-6 w-6 text-blue-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
 
-      {/* Sélecteur d'action global */}
-      <Card className="border-slate-200">
-        <CardHeader className="flex flex-row items-center justify-between pb-3">
-          <div>
-            <CardTitle className="text-sm font-semibold text-slate-900 flex items-center gap-2">
-              <CalendarRange className="h-4 w-4 text-[#840404]" />
-              Vue par action
-            </CardTitle>
-            <p className="text-xs text-slate-500">
-              Choisissez l&apos;action à analyser : phoning, mailing, visites ou
-              rendez-vous.
-            </p>
-          </div>
-          <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-0.5">
-            {(["phoning", "mailing", "visite", "rdv"] as ActionType[]).map(
-              (type) => (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => setSelectedAction(type)}
-                  className={`px-3 h-7 text-xs rounded-full transition ${
-                    selectedAction === type
-                      ? "bg-white text-slate-900 shadow-sm"
-                      : "text-slate-500 hover:text-slate-800"
-                  }`}
-                >
-                  {actionLabelMap[type]}
-                </button>
-              )
-            )}
-          </div>
-        </CardHeader>
-      </Card>
+      {/* SECTION 2: ACTIVITÉ COMMERCIALE */}
+      <section>
+        <div className="grid gap-6 lg:grid-cols-2">
+          {/* Graphique Principal - Suivi d'Action avec Objectif */}
+          <Card className="border-slate-200">
+            <CardHeader className="pb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <Activity className="h-5 w-5 text-[#840404]" />
+                    Suivi des Actions vs Objectifs
+                  </CardTitle>
+                  <p className="text-sm text-slate-500 mt-1">
+                    Progression des actions commerciales avec objectifs
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <select 
+                    value={selectedAction}
+                    onChange={(e) => setSelectedAction(e.target.value as ActionType)}
+                    className="text-sm border border-slate-200 rounded-md px-3 py-1 bg-white"
+                  >
+                    <option value="visite">Visites Terrain</option>
+                    <option value="rdv">Rendez-vous</option>
+                    <option value="phoning">Phoning</option>
+                    <option value="mailing">Mailing</option>
+                  </select>
+                  <select 
+                    value={timeRange}
+                    onChange={(e) => setTimeRange(e.target.value as TimeRange)}
+                    className="text-sm border border-slate-200 rounded-md px-3 py-1 bg-white"
+                  >
+                    <option value="4weeks">4 semaines</option>
+                    <option value="3months">3 mois</option>
+                  </select>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={weeklyData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis 
+                      dataKey="name" 
+                      tick={{ fontSize: 12, fill: "#64748b" }}
+                      axisLine={false}
+                    />
+                    <YAxis 
+                      tick={{ fontSize: 12, fill: "#64748b" }}
+                      axisLine={false}
+                      domain={[0, 'dataMax + 2']}
+                      tickFormatter={integerTickFormatter}
+                      allowDecimals={false}
+                    />
+                    <Tooltip content={<ActionTooltip />} />
+                    <Bar 
+                      dataKey={selectedAction} 
+                      fill={COLORS[selectedAction]}
+                      radius={[4, 4, 0, 0]}
+                      barSize={32}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="objectif" 
+                      stroke={COLORS.warning}
+                      strokeWidth={2}
+                      strokeDasharray="5 5"
+                      dot={false}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
 
-      {/* SECTION SEMAINE */}
-      <Card className="border-slate-200">
-        <CardHeader className="flex items-center justify-between pb-3">
-          <div>
-            <CardTitle className="text-sm font-semibold text-slate-900">
-              Vue hebdomadaire – {actionLabelMap[selectedAction]}
-            </CardTitle>
-            <p className="text-xs text-slate-500">
-              Volume par semaine (fenêtre de 4 semaines, navigation avant / après).
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setWeeklyOffset(weeklyOffset + 1)}
-              className="h-8 px-2 text-xs rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
-            >
-              &lt; Semaines précédentes
-            </button>
-            <button
-              type="button"
-              disabled={!canGoNextWeek}
-              onClick={() =>
-                setWeeklyOffset((prev) => (prev > 0 ? prev - 1 : 0))
-              }
-              className={`h-8 px-2 text-xs rounded-md border ${
-                canGoNextWeek
-                  ? "border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
-                  : "border-slate-100 bg-slate-50 text-slate-300 cursor-default"
-              }`}
-            >
-              Semaines suivantes &gt;
-            </button>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <div className="h-[260px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={weeklyDataForSelected}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis
-                  dataKey="name"
-                  tick={{ fontSize: 11, fill: "#6b7280" }}
-                />
-                <YAxis tick={{ fontSize: 11, fill: "#6b7280" }} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "white",
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 8,
-                    fontSize: 12,
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="value"
-                  stroke="#840404"
-                  strokeWidth={2}
-                  dot={{ r: 3 }}
-                  activeDot={{ r: 5 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
+          {/* Toutes les Actions Commerciales */}
+          <Card className="border-slate-200">
+            <CardHeader className="pb-4">
+              <CardTitle className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <BarChart3 className="h-5 w-5 text-[#840404]" />
+                Volume d'Activité Commerciale
+              </CardTitle>
+              <p className="text-sm text-slate-500">
+                Comparaison du volume de toutes les actions
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={allActionsData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis 
+                      dataKey="name" 
+                      tick={{ fontSize: 12, fill: "#64748b" }}
+                      axisLine={false}
+                    />
+                    <YAxis 
+                      tick={{ fontSize: 12, fill: "#64748b" }}
+                      axisLine={false}
+                      tickFormatter={integerTickFormatter}
+                      allowDecimals={false}
+                    />
+                    <Tooltip content={<AllActionsTooltip />} />
+                    <Bar dataKey="phoning" fill={COLORS.phoning} radius={[2, 2, 0, 0]} />
+                    <Bar dataKey="mailing" fill={COLORS.mailing} radius={[2, 2, 0, 0]} />
+                    <Bar dataKey="visite" fill={COLORS.visite} radius={[2, 2, 0, 0]} />
+                    <Bar dataKey="rdv" fill={COLORS.rdv} radius={[2, 2, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
 
-      {/* SECTION MOIS */}
-      <Card className="border-slate-200">
-        <CardHeader className="flex items-center justify-between pb-3">
-          <div>
-            <CardTitle className="text-sm font-semibold text-slate-900">
-              Vue mensuelle – {actionLabelMap[selectedAction]}
-            </CardTitle>
-            <p className="text-xs text-slate-500">
-              Volume par mois sur 12 mois glissants. Navigation possible pour
-              reculer dans le temps.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setMonthOffset(monthOffset + 1)}
-              className="h-8 px-2 text-xs rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
-            >
-              &lt; 12 mois précédents
-            </button>
-            <button
-              type="button"
-              disabled={!canGoNextMonth}
-              onClick={() =>
-                setMonthOffset((prev) => (prev > 0 ? prev - 1 : 0))
-              }
-              className={`h-8 px-2 text-xs rounded-md border ${
-                canGoNextMonth
-                  ? "border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
-                  : "border-slate-100 bg-slate-50 text-slate-300 cursor-default"
-              }`}
-            >
-              12 mois suivants &gt;
-            </button>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <div className="h-[260px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={monthlyDataForSelected}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis
-                  dataKey="name"
-                  tick={{ fontSize: 11, fill: "#6b7280" }}
-                />
-                <YAxis tick={{ fontSize: 11, fill: "#6b7280" }} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "white",
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 8,
-                    fontSize: 12,
-                  }}
-                />
-                <Bar dataKey="value" radius={[4, 4, 0, 0]} fill="#840404" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
+      {/* SECTION 3: ANALYSE DU PORTEFEUILLE */}
+      <section>
+        <div className="grid gap-6 lg:grid-cols-2">
+          {/* Répartition par Activité */}
+          <Card className="border-slate-200">
+            <CardHeader className="pb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <PieChart className="h-5 w-5 text-[#840404]" />
+                    Répartition par Secteur d'Activité
+                  </CardTitle>
+                  <p className="text-sm text-slate-500">
+                    {getFilterLabel(activityFilter)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Filter className="h-4 w-4 text-slate-500" />
+                  <select 
+                    value={activityFilter}
+                    onChange={(e) => setActivityFilter(e.target.value as EstablishmentFilter)}
+                    className="text-sm border border-slate-200 rounded-md px-3 py-1 bg-white"
+                  >
+                    <option value="tout">Tout</option>
+                    <option value="prospect">Prospects</option>
+                    <option value="client">Clients</option>
+                    <option value="ancien_client">Anciens clients</option>
+                  </select>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <RechartsPieChart>
+                    <Pie
+                      data={activityData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={100}
+                      paddingAngle={2}
+                      dataKey="value"
+                      label={({ name, pourcentage }) => `${name} (${pourcentage}%)`}
+                    >
+                      {activityData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip content={<ActivityTooltip />} />
+                    <Legend />
+                  </RechartsPieChart>
+                </ResponsiveContainer>
+              </div>
+              {isLoading.activity && (
+                <div className="text-center text-slate-500 text-sm">Chargement...</div>
+              )}
+            </CardContent>
+          </Card>
 
-      {/* STRUCTURE PORTEFEUILLE (secteur / villes) */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card className="border-slate-200">
-          <CardHeader>
-            <CardTitle className="text-sm font-semibold text-slate-900">
-              Répartition du portefeuille par secteur
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[240px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={establishmentsBySector} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                  <XAxis
-                    type="number"
-                    tick={{ fontSize: 11, fill: "#6b7280" }}
-                  />
-                  <YAxis
-                    dataKey="name"
-                    type="category"
-                    tick={{ fontSize: 11, fill: "#6b7280" }}
-                    width={110}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "white",
-                      border: "1px solid #e5e7eb",
-                      borderRadius: 8,
-                      fontSize: 12,
-                    }}
-                  />
-                  <Bar dataKey="value" radius={[4, 4, 4, 4]} fill="#9ca3af" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
+          {/* Répartition Géographique */}
+          <Card className="border-slate-200">
+            <CardHeader className="pb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <MapPin className="h-5 w-5 text-[#840404]" />
+                    Répartition Géographique
+                  </CardTitle>
+                  <p className="text-sm text-slate-500">
+                    {getFilterLabel(cityFilter)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Filter className="h-4 w-4 text-slate-500" />
+                  <select 
+                    value={cityFilter}
+                    onChange={(e) => setCityFilter(e.target.value as EstablishmentFilter)}
+                    className="text-sm border border-slate-200 rounded-md px-3 py-1 bg-white"
+                  >
+                    <option value="tout">Tout</option>
+                    <option value="prospect">Prospects</option>
+                    <option value="client">Clients</option>
+                    <option value="ancien_client">Anciens clients</option>
+                  </select>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={cityData} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                    <XAxis 
+                      type="number" 
+                      tick={{ fontSize: 12, fill: "#64748b" }}
+                      axisLine={false}
+                      tickFormatter={integerTickFormatter}
+                      allowDecimals={false}
+                    />
+                    <YAxis 
+                      type="category" 
+                      dataKey="name"
+                      tick={{ fontSize: 12, fill: "#64748b" }}
+                      axisLine={false}
+                      width={80}
+                    />
+                    <Tooltip content={<CityTooltip />} />
+                    <Bar 
+                      dataKey="count" 
+                      fill={COLORS.primary}
+                      radius={[0, 4, 4, 0]}
+                      barSize={20}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              {isLoading.city && (
+                <div className="text-center text-slate-500 text-sm">Chargement...</div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </section>
 
-        <Card className="border-slate-200">
-          <CardHeader>
-            <CardTitle className="text-sm font-semibold text-slate-900 flex items-center gap-2">
-              <MapPin className="h-4 w-4 text-slate-500" />
-              Top villes du portefeuille
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[240px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={establishmentsByCity}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                  <XAxis
-                    dataKey="name"
-                    tick={{ fontSize: 11, fill: "#6b7280" }}
-                    angle={-30}
-                    textAnchor="end"
-                    height={60}
-                  />
-                  <YAxis tick={{ fontSize: 11, fill: "#6b7280" }} />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "white",
-                      border: "1px solid #e5e7eb",
-                      borderRadius: 8,
-                      fontSize: 12,
-                    }}
-                  />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]} fill="#6b7280" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      {/* SECTION 4: INDICATEURS DE PERFORMANCE */}
+      <section>
+        <h2 className="text-xl font-semibold text-slate-900 mb-6">Indicateurs de Performance</h2>
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+          {performanceMetrics.map((metric, index) => {
+            const Icon = metric.icon;
+            const isTargetMet = metric.progress >= 100;
+            
+            return (
+              <Card key={index} className="border-slate-200">
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <div 
+                        className="p-2 rounded-lg" 
+                        style={{ backgroundColor: `${metric.color}20` }}
+                      >
+                        <Icon className="h-4 w-4" style={{ color: metric.color }} />
+                      </div>
+                      <span className="text-sm font-medium text-slate-700">{metric.label}</span>
+                    </div>
+                    {isTargetMet ? (
+                      <CheckCircle2 className="h-5 w-5 text-green-500" />
+                    ) : (
+                      <div className="h-5 w-5" />
+                    )}
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-2xl font-bold text-slate-900">{metric.value}</span>
+                      <span className="text-sm text-slate-500">sur {metric.target}</span>
+                    </div>
+                    
+                    <div className="w-full bg-slate-100 rounded-full h-2">
+                      <div 
+                        className="h-2 rounded-full transition-all duration-300"
+                        style={{ 
+                          width: `${Math.min(metric.progress, 100)}%`,
+                          backgroundColor: metric.progress >= 100 ? COLORS.success : 
+                                         metric.progress >= 75 ? COLORS.warning : COLORS.primary
+                        }}
+                      />
+                    </div>
+                    
+                    <div className="flex justify-between text-xs">
+                      <span className="text-slate-500">Progression</span>
+                      <span className="font-semibold" style={{ 
+                        color: metric.progress >= 100 ? COLORS.success : 
+                               metric.progress >= 75 ? COLORS.warning : COLORS.primary
+                      }}>
+                        {metric.progress}%
+                      </span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 };
