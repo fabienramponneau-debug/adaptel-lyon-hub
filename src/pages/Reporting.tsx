@@ -22,6 +22,8 @@ import {
   Mail,
   Clock,
   CheckCircle2,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -43,10 +45,9 @@ import { fr } from "date-fns/locale";
 
 interface Stats {
   totalProspects: number;
-  inactiveProspects: number;
+  clientsDeclenches: number;
+  clientsAVoir: number;
   anciensClients: number;
-  totalClients: number;
-  conversionRate: number;
   totalEstablishments: number;
 }
 
@@ -80,8 +81,7 @@ interface CityData {
 interface PerformanceMetric {
   label: string;
   value: number;
-  target: number;
-  progress: number;
+  evolution: number;
   icon: any;
   color: string;
 }
@@ -111,10 +111,9 @@ const ACTIVITY_COLORS = ['#840404', '#dc2626', '#f59e0b', '#2563eb', '#16a34a', 
 const Reporting = () => {
   const [stats, setStats] = useState<Stats>({
     totalProspects: 0,
-    inactiveProspects: 0,
+    clientsDeclenches: 0,
+    clientsAVoir: 0,
     anciensClients: 0,
-    totalClients: 0,
-    conversionRate: 0,
     totalEstablishments: 0,
   });
 
@@ -163,6 +162,7 @@ const Reporting = () => {
   };
 
   const fetchStats = async () => {
+    // Récupérer tous les établissements
     const { data: establishments } = await supabase
       .from("establishments")
       .select("id, statut, created_at");
@@ -173,28 +173,35 @@ const Reporting = () => {
     const clients = establishments.filter((e) => e.statut === "client");
     const anciens = establishments.filter((e) => e.statut === "ancien_client");
 
-    const ninetyDaysAgo = new Date();
-    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    // Clients déclenchés (prospects convertis en clients ce mois-ci)
+    const currentMonthStart = startOfMonth(new Date());
+    const clientsDeclenches = clients.filter(client => 
+      new Date(client.created_at) >= currentMonthStart
+    ).length;
 
-    const { data: recentActions } = await supabase
+    // Clients à voir (clients sans action depuis 3 mois)
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+
+    const { data: recentClientActions } = await supabase
       .from("actions")
-      .select("etablissement_id")
-      .gte("date_action", ninetyDaysAgo.toISOString().split("T")[0]);
+      .select("etablissement_id, date_action")
+      .in("etablissement_id", clients.map(c => c.id))
+      .gte("date_action", threeMonthsAgo.toISOString().split("T")[0]);
 
-    const activeEstablishmentIds = new Set(
-      recentActions?.map((a) => a.etablissement_id) || []
+    const clientsWithRecentActions = new Set(
+      recentClientActions?.map(a => a.etablissement_id) || []
     );
 
-    const inactive = prospects.filter((p) => !activeEstablishmentIds.has(p.id));
-
-    const conversionRate = clients.length > 0 ? (clients.length / establishments.length) * 100 : 0;
+    const clientsAVoir = clients.filter(client => 
+      !clientsWithRecentActions.has(client.id)
+    ).length;
 
     setStats({
       totalProspects: prospects.length,
-      inactiveProspects: inactive.length,
+      clientsDeclenches: clientsDeclenches,
+      clientsAVoir: clientsAVoir,
       anciensClients: anciens.length,
-      totalClients: clients.length,
-      conversionRate: Math.round(conversionRate * 100) / 100,
       totalEstablishments: establishments.length,
     });
   };
@@ -347,37 +354,60 @@ const Reporting = () => {
   };
 
   const fetchPerformanceMetrics = async () => {
-    // Métriques de performance simulées - à adapter avec vos vraies données
+    // Calculer l'évolution mois précédent vs mois actuel pour chaque type d'action
+    const currentMonthStart = startOfMonth(new Date());
+    const previousMonthStart = startOfMonth(subMonths(new Date(), 1));
+    const currentMonthEnd = endOfMonth(new Date());
+    const previousMonthEnd = endOfMonth(subMonths(new Date(), 1));
+
+    // Actions du mois actuel
+    const { data: currentMonthActions } = await supabase
+      .from("actions")
+      .select("type")
+      .gte("date_action", format(currentMonthStart, "yyyy-MM-dd"))
+      .lte("date_action", format(currentMonthEnd, "yyyy-MM-dd"));
+
+    // Actions du mois précédent
+    const { data: previousMonthActions } = await supabase
+      .from("actions")
+      .select("type")
+      .gte("date_action", format(previousMonthStart, "yyyy-MM-dd"))
+      .lte("date_action", format(previousMonthEnd, "yyyy-MM-dd"));
+
+    const calculateEvolution = (type: ActionType) => {
+      const currentCount = currentMonthActions?.filter(a => a.type === type).length || 0;
+      const previousCount = previousMonthActions?.filter(a => a.type === type).length || 0;
+      
+      if (previousCount === 0) return currentCount > 0 ? 100 : 0;
+      return Math.round(((currentCount - previousCount) / previousCount) * 100);
+    };
+
     const metrics: PerformanceMetric[] = [
       {
         label: "Visites terrain",
-        value: 12,
-        target: 16,
-        progress: 75,
+        value: currentMonthActions?.filter(a => a.type === 'visite').length || 0,
+        evolution: calculateEvolution('visite'),
         icon: MapPin,
         color: COLORS.primary
       },
       {
         label: "Rendez-vous",
-        value: 18,
-        target: 20,
-        progress: 90,
+        value: currentMonthActions?.filter(a => a.type === 'rdv').length || 0,
+        evolution: calculateEvolution('rdv'),
         icon: Clock,
         color: COLORS.success
       },
       {
         label: "Appels effectués",
-        value: 45,
-        target: 50,
-        progress: 90,
+        value: currentMonthActions?.filter(a => a.type === 'phoning').length || 0,
+        evolution: calculateEvolution('phoning'),
         icon: Phone,
         color: COLORS.info
       },
       {
         label: "Emails envoyés",
-        value: 22,
-        target: 30,
-        progress: 73,
+        value: currentMonthActions?.filter(a => a.type === 'mailing').length || 0,
+        evolution: calculateEvolution('mailing'),
         icon: Mail,
         color: COLORS.phoning
       }
@@ -529,7 +559,7 @@ const Reporting = () => {
                     {stats.totalEstablishments}
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
-                    {stats.totalProspects} prospects • {stats.totalClients} clients
+                    {stats.totalProspects} prospects • {stats.totalEstablishments - stats.totalProspects - stats.anciensClients} clients
                   </p>
                 </div>
                 <div className="p-3 bg-[#840404]/10 rounded-lg">
@@ -543,12 +573,12 @@ const Reporting = () => {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-slate-600">Taux de Conversion</p>
+                  <p className="text-sm font-medium text-slate-600">Clients Déclenchés</p>
                   <p className="text-2xl font-bold text-slate-900 mt-1">
-                    {stats.conversionRate}%
+                    {stats.clientsDeclenches}
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
-                    Prospects → Clients
+                    Ce mois-ci
                   </p>
                 </div>
                 <div className="p-3 bg-green-100 rounded-lg">
@@ -562,12 +592,12 @@ const Reporting = () => {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-slate-600">Attention Requise</p>
+                  <p className="text-sm font-medium text-slate-600">Clients à Voir</p>
                   <p className="text-2xl font-bold text-slate-900 mt-1">
-                    {stats.inactiveProspects}
+                    {stats.clientsAVoir}
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
-                    Prospects inactifs
+                    Sans action depuis 3 mois
                   </p>
                 </div>
                 <div className="p-3 bg-amber-100 rounded-lg">
@@ -841,11 +871,11 @@ const Reporting = () => {
 
       {/* SECTION 4: INDICATEURS DE PERFORMANCE */}
       <section>
-        <h2 className="text-xl font-semibold text-slate-900 mb-6">Indicateurs de Performance</h2>
+        <h2 className="text-xl font-semibold text-slate-900 mb-6">Évolution Mensuelle des Actions</h2>
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           {performanceMetrics.map((metric, index) => {
             const Icon = metric.icon;
-            const isTargetMet = metric.progress >= 100;
+            const isPositive = metric.evolution >= 0;
             
             return (
               <Card key={index} className="border-slate-200">
@@ -860,38 +890,22 @@ const Reporting = () => {
                       </div>
                       <span className="text-sm font-medium text-slate-700">{metric.label}</span>
                     </div>
-                    {isTargetMet ? (
-                      <CheckCircle2 className="h-5 w-5 text-green-500" />
-                    ) : (
-                      <div className="h-5 w-5" />
-                    )}
+                    <div className={`flex items-center gap-1 ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
+                      {isPositive ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
+                      <span className="text-sm font-semibold">
+                        {metric.evolution}%
+                      </span>
+                    </div>
                   </div>
                   
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
                       <span className="text-2xl font-bold text-slate-900">{metric.value}</span>
-                      <span className="text-sm text-slate-500">sur {metric.target}</span>
+                      <span className="text-sm text-slate-500">ce mois</span>
                     </div>
                     
-                    <div className="w-full bg-slate-100 rounded-full h-2">
-                      <div 
-                        className="h-2 rounded-full transition-all duration-300"
-                        style={{ 
-                          width: `${Math.min(metric.progress, 100)}%`,
-                          backgroundColor: metric.progress >= 100 ? COLORS.success : 
-                                         metric.progress >= 75 ? COLORS.warning : COLORS.primary
-                        }}
-                      />
-                    </div>
-                    
-                    <div className="flex justify-between text-xs">
-                      <span className="text-slate-500">Progression</span>
-                      <span className="font-semibold" style={{ 
-                        color: metric.progress >= 100 ? COLORS.success : 
-                               metric.progress >= 75 ? COLORS.warning : COLORS.primary
-                      }}>
-                        {metric.progress}%
-                      </span>
+                    <div className="text-xs text-slate-500">
+                      vs mois précédent
                     </div>
                   </div>
                 </CardContent>

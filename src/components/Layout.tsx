@@ -29,6 +29,7 @@ export const Layout = ({ children }: LayoutProps) => {
   const location = useLocation();
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [displayName, setDisplayName] = useState<string>("");
 
   useEffect(() => {
     const {
@@ -51,6 +52,54 @@ export const Layout = ({ children }: LayoutProps) => {
     return () => subscription.unsubscribe();
   }, [navigate]);
 
+  // Récupération du nom à afficher (metadata -> profiles -> fallback email)
+  useEffect(() => {
+    const computeDisplayName = async () => {
+      if (!session) {
+        setDisplayName("Utilisateur");
+        return;
+      }
+
+      const meta = (session.user.user_metadata || {}) as any;
+      const email = session.user.email || "";
+      const fallbackFromEmail =
+        email && email.includes("@")
+          ? email.split("@")[0].replace(".", " ")
+          : "Utilisateur";
+
+      // 1) Si le metadata a déjà prenom/nom (cas Lovable initial)
+      if (meta.prenom || meta.nom) {
+        const fullName = `${meta.prenom ? meta.prenom : ""} ${
+          meta.nom ? meta.nom : ""
+        }`.trim();
+        setDisplayName(fullName || fallbackFromEmail);
+        return;
+      }
+
+      // 2) Sinon on va chercher dans public.profiles
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("prenom, nom")
+        .eq("id", session.user.id)
+        .maybeSingle();
+
+      if (error) {
+        console.error("Erreur chargement profil :", error.message);
+        setDisplayName(fallbackFromEmail);
+        return;
+      }
+
+      if (data && (data.prenom || data.nom)) {
+        const fullName = `${data.prenom ?? ""} ${data.nom ?? ""}`.trim();
+        setDisplayName(fullName || fallbackFromEmail);
+      } else {
+        setDisplayName(fallbackFromEmail);
+      }
+    };
+
+    computeDisplayName();
+  }, [session]);
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
@@ -67,14 +116,13 @@ export const Layout = ({ children }: LayoutProps) => {
 
   if (!session) return null;
 
-  const meta = (session.user.user_metadata || {}) as any;
-  const fullName =
-    (meta.prenom || meta.nom) &&
-    `${meta.prenom ? meta.prenom : ""} ${meta.nom ? meta.nom : ""}`.trim();
   const email = session.user.email || "";
-  const fallbackName =
-    email && email.includes("@") ? email.split("@")[0].replace(".", " ") : "Utilisateur";
-  const displayName = fullName || fallbackName;
+  const initial =
+    displayName && displayName.trim().length > 0
+      ? displayName.trim().charAt(0).toUpperCase()
+      : email && email.includes("@")
+      ? email.split("@")[0].charAt(0).toUpperCase()
+      : "U";
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -139,21 +187,26 @@ export const Layout = ({ children }: LayoutProps) => {
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-2 rounded-xl p-1.5 hover:bg-slate-100/80 transition-colors duration-200">
                   <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-[#840404] to-[#a00606] flex items-center justify-center text-xs font-semibold text-white shadow-sm">
-                    {displayName.charAt(0).toUpperCase()}
+                    {initial}
                   </div>
                   <div className="hidden sm:flex flex-col items-start leading-tight">
-                    <span className="text-sm font-semibold text-slate-900">{displayName}</span>
+                    <span className="text-sm font-semibold text-slate-900">
+                      {displayName || "Utilisateur"}
+                    </span>
                     <span className="text-xs text-slate-500">En ligne</span>
                   </div>
                   <ChevronDown className="h-4 w-4 text-slate-400" />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56 rounded-xl shadow-lg border-slate-200">
+              <DropdownMenuContent
+                align="end"
+                className="w-56 rounded-xl shadow-lg border-slate-200"
+              >
                 <DropdownMenuItem className="flex items-center gap-2 cursor-pointer">
                   <Settings className="h-4 w-4" />
                   Paramètres du compte
                 </DropdownMenuItem>
-                <DropdownMenuItem 
+                <DropdownMenuItem
                   className="flex items-center gap-2 cursor-pointer text-red-600 focus:text-red-600"
                   onClick={handleLogout}
                 >
@@ -168,9 +221,7 @@ export const Layout = ({ children }: LayoutProps) => {
 
       {/* Contenu principal */}
       <main className="flex-1 w-full">
-        <div className="w-full px-6 lg:px-8 py-6">
-          {children}
-        </div>
+        <div className="w-full px-6 lg:px-8 py-6">{children}</div>
       </main>
     </div>
   );

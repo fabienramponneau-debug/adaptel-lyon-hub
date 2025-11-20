@@ -5,12 +5,46 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, Pencil, Trash2, Check, X } from "lucide-react";
 import { toast } from "sonner";
+import { format, subMonths } from "date-fns";
 
 interface Parametrage {
   id: string;
   categorie: "groupe" | "secteur" | "activite" | "concurrent";
   valeur: string;
 }
+
+type RoleType = "admin" | "commercial";
+
+type ActionType = "visite" | "rdv" | "phoning" | "mailing";
+
+interface UserOption {
+  id: string;
+  label: string;
+}
+
+const ACTION_LABELS: Record<ActionType, string> = {
+  visite: "Visites terrain",
+  rdv: "Rendez-vous",
+  phoning: "Phoning",
+  mailing: "Mailing",
+};
+
+// 12 mois glissants (MM/yyyy) avec code period_code = yyyy-MM
+const MONTH_OPTIONS = (() => {
+  const now = new Date();
+  const res: { value: string; label: string }[] = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = subMonths(now, i);
+    res.push({
+      value: format(d, "yyyy-MM"),
+      label: format(d, "MM/yyyy"),
+    });
+  }
+  return res;
+})();
+
+// Client "non typé" pour la nouvelle table objectifs_actions
+const sbAny = supabase as any;
 
 const Parametrage = () => {
   const [parametrages, setParametrages] = useState<Parametrage[]>([]);
@@ -24,9 +58,39 @@ const Parametrage = () => {
     concurrent: "",
   });
 
+  // Gestion profils / rôles / objectifs
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentRole, setCurrentRole] = useState<RoleType | null>(null);
+  const [users, setUsers] = useState<UserOption[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState<string>(
+    MONTH_OPTIONS[MONTH_OPTIONS.length - 1]?.value
+  );
+  const [objectifs, setObjectifs] = useState<Record<ActionType, number>>({
+    visite: 0,
+    rdv: 0,
+    phoning: 0,
+    mailing: 0,
+  });
+  const [loadingObjectifs, setLoadingObjectifs] = useState(false);
+  const [savingObjectifs, setSavingObjectifs] = useState(false);
+
   useEffect(() => {
     fetchParametrages();
+    initCurrentUser();
   }, []);
+
+  useEffect(() => {
+    if (currentUserId) {
+      fetchUsers();
+    }
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (selectedUserId && selectedMonth) {
+      fetchObjectifs(selectedUserId, selectedMonth);
+    }
+  }, [selectedUserId, selectedMonth]);
 
   const fetchParametrages = async () => {
     setLoading(true);
@@ -43,11 +107,146 @@ const Parametrage = () => {
     setLoading(false);
   };
 
-  const handleAdd = async (categorie: "groupe" | "secteur" | "activite" | "concurrent") => {
+  const initCurrentUser = async () => {
+    const { data, error } = await supabase.auth.getUser();
+    if (error) {
+      console.error("Erreur getUser :", error.message);
+      return;
+    }
+    const user = data.user;
+    if (!user) return;
+
+    setCurrentUserId(user.id);
+
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      console.error("Erreur chargement profil :", profileError.message);
+      return;
+    }
+
+    if (profile?.role) {
+      setCurrentRole(profile.role as RoleType);
+    }
+  };
+
+  const fetchUsers = async () => {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, prenom, nom, actif")
+      .eq("actif", true)
+      .order("prenom", { ascending: true });
+
+    if (error) {
+      console.error("Erreur chargement utilisateurs :", error.message);
+      return;
+    }
+
+    const options: UserOption[] =
+      data?.map((p: any) => ({
+        id: p.id,
+        label: `${p.prenom ?? ""} ${p.nom ?? ""}`.trim() || "Utilisateur",
+      })) || [];
+
+    setUsers(options);
+
+    // Sélection par défaut : user courant si présent, sinon premier
+    if (!selectedUserId && options.length > 0) {
+      const current = options.find((o) => o.id === currentUserId);
+      setSelectedUserId((current || options[0]).id);
+    }
+  };
+
+  const fetchObjectifs = async (userId: string, month: string) => {
+    setLoadingObjectifs(true);
+
+    const { data, error } = await sbAny
+      .from("objectifs_actions")
+      .select("action_type, objectif")
+      .eq("user_id", userId)
+      .eq("period_type", "mois")
+      .eq("period_code", month);
+
+    if (error) {
+      console.error("Erreur chargement objectifs :", error.message);
+      setLoadingObjectifs(false);
+      return;
+    }
+
+    const base: Record<ActionType, number> = {
+      visite: 0,
+      rdv: 0,
+      phoning: 0,
+      mailing: 0,
+    };
+
+    (data || []).forEach((row: any) => {
+      const type = row.action_type as ActionType;
+      if (type in base) {
+        base[type] = row.objectif ?? 0;
+      }
+    });
+
+    setObjectifs(base);
+    setLoadingObjectifs(false);
+  };
+
+  const handleSaveObjectifs = async () => {
+    if (!selectedUserId || !selectedMonth) return;
+
+    setSavingObjectifs(true);
+    try {
+      // On supprime les anciens objectifs pour ce user + mois
+      const { error: delError } = await sbAny
+        .from("objectifs_actions")
+        .delete()
+        .eq("user_id", selectedUserId)
+        .eq("period_type", "mois")
+        .eq("period_code", selectedMonth);
+
+      if (delError) {
+        console.error("Erreur suppression anciens objectifs :", delError.message);
+        toast.error("Erreur lors de l'enregistrement des objectifs");
+        setSavingObjectifs(false);
+        return;
+      }
+
+      const rows = (Object.keys(objectifs) as ActionType[]).map((type) => ({
+        user_id: selectedUserId,
+        action_type: type,
+        period_type: "mois",
+        period_code: selectedMonth,
+        objectif: objectifs[type] ?? 0,
+      }));
+
+      const { error: insertError } = await sbAny
+        .from("objectifs_actions")
+        .insert(rows);
+
+      if (insertError) {
+        console.error("Erreur insertion objectifs :", insertError.message);
+        toast.error("Erreur lors de l'enregistrement des objectifs");
+      } else {
+        toast.success("Objectifs enregistrés");
+      }
+    } finally {
+      setSavingObjectifs(false);
+    }
+  };
+
+  const handleAdd = async (
+    categorie: "groupe" | "secteur" | "activite" | "concurrent"
+  ) => {
     const valeur = newValues[categorie].trim();
     if (!valeur) return;
 
-    const { error } = await supabase.from("parametrages").insert({ categorie, valeur });
+    const { error } = await supabase
+      .from("parametrages")
+      .insert({ categorie, valeur });
 
     if (error) {
       toast.error("Erreur lors de l'ajout");
@@ -78,7 +277,10 @@ const Parametrage = () => {
   };
 
   const handleDelete = async (id: string) => {
-    const { error } = await supabase.from("parametrages").delete().eq("id", id);
+    const { error } = await supabase
+      .from("parametrages")
+      .delete()
+      .eq("id", id);
 
     if (error) {
       toast.error("Erreur lors de la suppression");
@@ -130,7 +332,8 @@ const Parametrage = () => {
             </Button>
           </div>
 
-          <div className="space-y-2">
+          {/* Liste avec scroll interne */}
+          <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
             {items.map((item) => (
               <div
                 key={item.id}
@@ -155,7 +358,11 @@ const Parametrage = () => {
                     >
                       <Check className="h-4 w-4 text-client" />
                     </Button>
-                    <Button size="icon" variant="ghost" onClick={cancelEdit}>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={cancelEdit}
+                    >
                       <X className="h-4 w-4" />
                     </Button>
                   </>
@@ -195,18 +402,121 @@ const Parametrage = () => {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold text-foreground">Paramétrage</h1>
-        <p className="text-muted-foreground">Gérez les listes et paramètres de l'application</p>
+        <p className="text-muted-foreground">
+          Gérez les listes et paramètres de l'application
+        </p>
       </div>
 
       {loading ? (
         <div className="text-center text-muted-foreground">Chargement...</div>
       ) : (
-        <div className="grid gap-6 md:grid-cols-2">
-          {renderCategory("Groupes", "groupe")}
-          {renderCategory("Secteurs", "secteur")}
-          {renderCategory("Activités", "activite")}
-          {renderCategory("Concurrents", "concurrent")}
-        </div>
+        <>
+          <div className="grid gap-6 md:grid-cols-2">
+            {renderCategory("Groupes", "groupe")}
+            {renderCategory("Secteurs", "secteur")}
+            {renderCategory("Activités", "activite")}
+            {renderCategory("Concurrents", "concurrent")}
+          </div>
+
+          {/* Section Objectifs – visible uniquement pour les admins */}
+          {currentRole === "admin" && (
+            <Card className="mt-6">
+              <CardHeader>
+                <CardTitle>Objectifs commerciaux par utilisateur</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap items-end gap-4">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-sm font-medium text-muted-foreground">
+                      Commercial
+                    </span>
+                    <select
+                      className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                      value={selectedUserId || ""}
+                      onChange={(e) =>
+                        setSelectedUserId(
+                          e.target.value ? e.target.value : null
+                        )
+                      }
+                    >
+                      {users.length === 0 && (
+                        <option value="">Aucun utilisateur actif</option>
+                      )}
+                      {users.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <span className="text-sm font-medium text-muted-foreground">
+                      Mois
+                    </span>
+                    <select
+                      className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                      value={selectedMonth}
+                      onChange={(e) => setSelectedMonth(e.target.value)}
+                    >
+                      {MONTH_OPTIONS.map((m) => (
+                        <option key={m.value} value={m.value}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="ml-auto">
+                    <Button
+                      onClick={handleSaveObjectifs}
+                      disabled={
+                        !selectedUserId || savingObjectifs || loadingObjectifs
+                      }
+                    >
+                      {savingObjectifs
+                        ? "Enregistrement..."
+                        : "Enregistrer les objectifs"}
+                    </Button>
+                  </div>
+                </div>
+
+                {loadingObjectifs ? (
+                  <div className="text-sm text-muted-foreground">
+                    Chargement des objectifs...
+                  </div>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                    {(Object.keys(objectifs) as ActionType[]).map((type) => (
+                      <div
+                        key={type}
+                        className="flex flex-col gap-1 rounded-md border bg-card p-3"
+                      >
+                        <span className="text-sm font-medium text-foreground">
+                          {ACTION_LABELS[type]}
+                        </span>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={objectifs[type]}
+                          onChange={(e) =>
+                            setObjectifs((prev) => ({
+                              ...prev,
+                              [type]: Number(e.target.value) || 0,
+                            }))
+                          }
+                        />
+                        <span className="text-xs text-muted-foreground">
+                          Objectif mensuel
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </>
       )}
     </div>
   );
