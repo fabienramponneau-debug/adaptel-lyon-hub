@@ -1,9 +1,10 @@
+// src/pages/Parametrage.tsx - Finalisé (Header Uniforme, Objectifs)
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Pencil, Trash2, Check, X } from "lucide-react";
+import { Plus, Pencil, Trash2, Check, X, Sliders } from "lucide-react";
 import { toast } from "sonner";
 import { format, subMonths } from "date-fns";
 
@@ -154,7 +155,6 @@ const Parametrage = () => {
 
     setUsers(options);
 
-    // Sélection par défaut : user courant si présent, sinon premier
     if (!selectedUserId && options.length > 0) {
       const current = options.find((o) => o.id === currentUserId);
       setSelectedUserId((current || options[0]).id);
@@ -200,7 +200,6 @@ const Parametrage = () => {
 
     setSavingObjectifs(true);
     try {
-      // On supprime les anciens objectifs pour ce user + mois
       const { error: delError } = await sbAny
         .from("objectifs_actions")
         .delete()
@@ -356,7 +355,7 @@ const Parametrage = () => {
                       variant="ghost"
                       onClick={() => handleEdit(item.id)}
                     >
-                      <Check className="h-4 w-4 text-client" />
+                      <Check className="h-4 w-4 text-green-600" />
                     </Button>
                     <Button
                       size="icon"
@@ -381,7 +380,7 @@ const Parametrage = () => {
                       variant="ghost"
                       onClick={() => handleDelete(item.id)}
                     >
-                      <Trash2 className="h-4 w-4 text-destructive" />
+                      <Trash2 className="h-4 w-4 text-red-600" />
                     </Button>
                   </>
                 )}
@@ -400,12 +399,24 @@ const Parametrage = () => {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-foreground">Paramétrage</h1>
-        <p className="text-muted-foreground">
-          Gérez les listes et paramètres de l'application
-        </p>
+        
+      {/* NOUVEL EN-TÊTE UNIFORMISÉ */}
+      <div className="flex flex-col gap-2 mb-6">
+        <div className="flex items-center gap-3">
+            <div className="p-2 bg-[#840404]/10 rounded-lg">
+                <Sliders className="h-6 w-6 text-[#840404]" />
+            </div>
+            <div>
+                <h1 className="text-2xl font-bold text-slate-900">
+                    Paramétrage & Objectifs
+                </h1>
+                <p className="text-slate-600">
+                    Configuration de l&apos;application
+                </p>
+            </div>
+        </div>
       </div>
+      {/* FIN DU NOUVEL EN-TÊTE */}
 
       {loading ? (
         <div className="text-center text-muted-foreground">Chargement...</div>

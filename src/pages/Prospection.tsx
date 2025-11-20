@@ -1,3 +1,4 @@
+// src/pages/Prospection.tsx - Finalisé (Header, Filtre User, Stabilité)
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -19,6 +20,7 @@ import {
   Calendar as CalendarIcon,
   Bell,
   Lightbulb,
+  Target // Icône pour le titre
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,6 +36,7 @@ import { ActionForm } from "@/components/ActionForm";
 import { SuggestionCard } from "@/components/SuggestionCard";
 import { SuggestionForm } from "@/components/SuggestionForm";
 import { EstablishmentSheet } from "@/components/EstablishmentSheet";
+import { useUserView } from "@/contexts/UserViewContext"; // Import du contexte UserView
 
 interface Action {
   id: string;
@@ -57,14 +60,17 @@ interface Suggestion {
 }
 
 const Prospection = () => {
-  // Lundi de la semaine de référence
+  const { selectedUserId, loadingUserView } = useUserView() as any; // Cast à 'any' pour la stabilité
+  const isGlobalView = selectedUserId === "tous";
+
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(
     startOfWeek(new Date(), { weekStartsOn: 1 })
   );
 
-  const [actions, setActions] = useState<Action[]>([]);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [reminders, setReminders] = useState<Action[]>([]);
+  // Correction TS2589: Cast à 'any'
+  const [actions, setActions] = useState<Action[] | any>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[] | any>([]);
+  const [reminders, setReminders] = useState<Action[] | any>([]);
 
   const [actionFormOpen, setActionFormOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string>("");
@@ -73,7 +79,6 @@ const Prospection = () => {
     useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  // Filtres de type
   const [typeFilter, setTypeFilter] = useState<
     ("phoning" | "mailing" | "visite" | "rdv")[]
   >(["phoning", "mailing", "visite", "rdv"]);
@@ -82,27 +87,57 @@ const Prospection = () => {
     "calendar"
   );
 
-  useEffect(() => {
-    fetchActions();
-  }, [currentWeekStart]);
+  // Fonction pour appliquer le filtre utilisateur
+  const applyUserFilter = (query: any) => {
+    if (isGlobalView || !selectedUserId || selectedUserId === 'tous') {
+        return query;
+    }
+    return query.eq('user_id', selectedUserId);
+  };
 
-  useEffect(() => {
-    fetchSuggestions();
-    fetchReminders();
-  }, []);
+  // Ajout de la fonction refreshAll pour les mises à jour propres
+  const refreshAll = () => {
+    if (selectedUserId) {
+        const userIdToFilter = isGlobalView ? null : selectedUserId;
+        fetchActions(userIdToFilter);
+        fetchSuggestions(userIdToFilter);
+        fetchReminders(userIdToFilter);
+    }
+  };
 
-  const fetchActions = async () => {
+
+  // useEffect pour charger les actions, suggestions et rappels
+  useEffect(() => {
+    if (loadingUserView || !selectedUserId) return;
+    
+    const userIdToFilter = isGlobalView ? null : selectedUserId;
+
+    fetchActions(userIdToFilter);
+    fetchSuggestions(userIdToFilter);
+    fetchReminders(userIdToFilter);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentWeekStart, selectedUserId, loadingUserView]);
+
+  
+  const fetchActions = async (userIdToFilter: string | null) => {
     const start = currentWeekStart;
     const end = addDays(currentWeekStart, 13); // 2 semaines
 
     const startStr = format(start, "yyyy-MM-dd");
     const endStr = format(end, "yyyy-MM-dd");
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("actions")
       .select(
         "id, type, date_action, commentaire, etablissement_id, etablissement:establishments(nom)"
-      )
+      );
+      
+    if (userIdToFilter) {
+        query = query.eq('user_id', userIdToFilter);
+    }
+    
+    const { data, error } = await query
       .gte("date_action", startStr)
       .lte("date_action", endStr)
       .order("date_action", { ascending: true });
@@ -112,23 +147,34 @@ const Prospection = () => {
     }
   };
 
-  const fetchSuggestions = async () => {
-    const { data } = await supabase
+  const fetchSuggestions = async (userIdToFilter: string | null) => {
+    let query = supabase
       .from("suggestions")
       .select("*")
       .order("created_at", { ascending: false })
       .limit(100);
-
+      
+    if (userIdToFilter) {
+        query = query.eq('created_by', userIdToFilter); 
+    }
+    
+    const { data } = await query;
     setSuggestions((data as any) || []);
   };
 
-  const fetchReminders = async () => {
-    const { data } = await supabase
+  const fetchReminders = async (userIdToFilter: string | null) => {
+    let query = supabase
       .from("actions")
       .select(
         "id, type, date_action, relance_date, commentaire, etablissement_id, etablissement:establishments(nom)"
       )
-      .eq("statut_action", "a_relancer")
+      .eq("statut_action", "a_relancer");
+      
+    if (userIdToFilter) {
+        query = query.eq('user_id', userIdToFilter);
+    }
+
+    const { data } = await query
       .order("relance_date", { ascending: true });
 
     setReminders((data as any) || []);
@@ -140,7 +186,8 @@ const Prospection = () => {
     );
   };
 
-  const filteredActions = actions.filter((a) => typeFilter.includes(a.type));
+  // Correction de la vérification de type ici
+  const filteredActions = actions.filter((a: any) => typeFilter.includes(a.type));
 
   const navigateWeek = (direction: "prev" | "next") => {
     setCurrentWeekStart((prev) =>
@@ -161,8 +208,7 @@ const Prospection = () => {
 
   const handleDeleteAction = async (id: string) => {
     await supabase.from("actions").delete().eq("id", id);
-    fetchActions();
-    fetchReminders();
+    refreshAll(); 
   };
 
   // === Helpers UI ===
@@ -213,7 +259,7 @@ const Prospection = () => {
   };
 
   const activeSuggestionsCount = suggestions.filter(
-    (s) => s.statut !== "traite"
+    (s: any) => s.statut !== "traite"
   ).length;
 
   const activeRemindersCount = reminders.length;
@@ -232,7 +278,8 @@ const Prospection = () => {
       <div className="grid grid-cols-5 gap-3">
         {days.map((day) => {
           const dateStr = format(day, "yyyy-MM-dd");
-          const dayActions = filteredActions.filter((a) =>
+          // Correction de la vérification de type ici
+          const dayActions = (filteredActions as any[]).filter((a) =>
             isSameDay(parseISO(a.date_action), day)
           );
 
@@ -269,7 +316,7 @@ const Prospection = () => {
                     Aucune action
                   </p>
                 ) : (
-                  dayActions.map((action) => {
+                  dayActions.map((action: any) => {
                     const colorClass = getActionColor(action.type);
                     const nom =
                       action.etablissement?.nom || "Établissement";
@@ -432,7 +479,7 @@ const Prospection = () => {
 
     return (
       <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
-        {reminders.map((r) => {
+        {reminders.map((r: any) => {
           const baseDate = r.relance_date || r.date_action;
           const dateLabel = baseDate
             ? format(new Date(baseDate), "dd MMM yyyy", { locale: fr })
@@ -477,15 +524,23 @@ const Prospection = () => {
 
   return (
     <div className="space-y-6">
-      {/* Titre page cohérent avec les autres */}
-      <div className="space-y-1">
-        <h1 className="text-[28px] leading-8 font-semibold text-slate-900">
-          Prospection
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Préparez et visualisez vos actions de prospection
-        </p>
+      {/* NOUVEL EN-TÊTE UNIFORMISÉ (Header cohérent) */}
+      <div className="flex flex-col gap-2 mb-6">
+          <div className="flex items-center gap-3">
+              <div className="p-2 bg-[#840404]/10 rounded-lg">
+                  <Target className="h-6 w-6 text-[#840404]" />
+              </div>
+              <div>
+                  <h1 className="text-2xl font-bold text-slate-900">
+                      Prospection
+                  </h1>
+                  <p className="text-slate-600">
+                      Préparez et visualisez vos actions de prospection
+                  </p>
+              </div>
+          </div>
       </div>
+      {/* FIN DU NOUVEL EN-TÊTE */}
 
       <Tabs
         value={tab}
@@ -544,7 +599,7 @@ const Prospection = () => {
                 <Lightbulb className="h-5 w-5 text-[#840404]" />
                 <span>Suggestions de prospection</span>
               </CardTitle>
-              <SuggestionForm onSuccess={fetchSuggestions} />
+              <SuggestionForm onSuccess={refreshAll} />
             </CardHeader>
             <CardContent>
               {suggestions.length === 0 ? (
@@ -553,14 +608,11 @@ const Prospection = () => {
                 </p>
               ) : (
                 <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
-                  {suggestions.map((s) => (
+                  {suggestions.map((s: any) => (
                     <SuggestionCard
                       key={s.id}
                       suggestion={s}
-                      onUpdate={() => {
-                        fetchSuggestions();
-                        fetchActions();
-                      }}
+                      onUpdate={refreshAll}
                     />
                   ))}
                 </div>
@@ -588,10 +640,7 @@ const Prospection = () => {
         open={actionFormOpen}
         onOpenChange={setActionFormOpen}
         establishmentId={undefined}
-        onSuccess={() => {
-          fetchActions();
-          fetchReminders();
-        }}
+        onSuccess={refreshAll}
         prefilledDate={selectedDate}
       />
 
@@ -606,10 +655,7 @@ const Prospection = () => {
             establishmentId={selectedEstablishmentId}
             open={sheetOpen}
             onClose={() => setSheetOpen(false)}
-            onUpdate={() => {
-              fetchActions();
-              fetchReminders();
-            }}
+            onUpdate={refreshAll}
           />
         </>
       )}

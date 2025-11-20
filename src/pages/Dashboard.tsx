@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+// src/pages/Dashboard.tsx - Finalisé (Header, Filtre User, Stabilité, Marge uniforme)
+import { useEffect, useState, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { DashboardStats } from "@/components/DashboardStats";
 import {
@@ -16,11 +17,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Lightbulb,
-  BarChart3,
   Activity,
-  Plus,
   Target,
   TrendingUp,
+  LayoutDashboard,
 } from "lucide-react";
 import {
   format,
@@ -38,6 +38,7 @@ import { SuggestionCard } from "@/components/SuggestionCard";
 import { SuggestionForm } from "@/components/SuggestionForm";
 import { EstablishmentSheet } from "@/components/EstablishmentSheet";
 import { Badge } from "@/components/ui/badge";
+import { useUserView } from "@/contexts/UserViewContext";
 
 interface Stats {
   prospects: number;
@@ -71,21 +72,27 @@ interface Suggestion {
 type WeekKey = "-1" | "0" | "1";
 
 const Dashboard = () => {
+  const {
+    selectedUserId,
+    loadingUserView,
+  } = useUserView() as any; 
+  const isGlobalView = selectedUserId === "tous";
+
   const [stats, setStats] = useState<Stats>({
     prospects: 0,
     clients: 0,
     anciensClients: 0,
   });
 
-  const [upcomingActions, setUpcomingActions] = useState<Action[]>([]);
-  const [reminders, setReminders] = useState<Action[]>([]);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [upcomingActions, setUpcomingActions] = useState<Action[] | any>([]);
+  const [reminders, setReminders] = useState<Action[] | any>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[] | any>([]);
 
   const [viewMode, setViewMode] = useState<"week" | "month">("week");
   const [periodOffset, setPeriodOffset] = useState(0);
 
   const [weeklyActions, setWeeklyActions] = useState<
-    Record<WeekKey, Action[]>
+    Record<WeekKey, Action[] | any> 
   >({
     "-1": [],
     "0": [],
@@ -96,21 +103,29 @@ const Dashboard = () => {
     useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
+  const applyUserFilter = (query: any) => {
+    if (isGlobalView || !selectedUserId || selectedUserId === 'tous') {
+        return query;
+    }
+    return query.eq('user_id', selectedUserId);
+  };
+
+
   useEffect(() => {
     fetchStats();
   }, []);
 
   useEffect(() => {
+    if (!selectedUserId || loadingUserView) return;
     fetchActionsAndReminders();
-  }, [viewMode, periodOffset]);
-
-  useEffect(() => {
     fetchSuggestions();
     fetchWeeklyActivity();
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, periodOffset, selectedUserId, loadingUserView]);
+
 
   const activeSuggestionsCount = suggestions.filter(
-    (s) => s.statut !== "traite"
+    (s: any) => s.statut !== "traite"
   ).length;
 
   const fetchStats = async () => {
@@ -169,8 +184,7 @@ const Dashboard = () => {
     const startStr = format(start, "yyyy-MM-dd");
     const endStr = format(end, "yyyy-MM-dd");
 
-    // Actions à venir = statut_action = 'a_venir'
-    const { data: actionsData } = await supabase
+    let actionsQuery = supabase
       .from("actions")
       .select(
         "id, type, date_action, commentaire, etablissement_id, etablissement:establishments(nom)"
@@ -179,11 +193,13 @@ const Dashboard = () => {
       .gte("date_action", startStr)
       .lte("date_action", endStr)
       .order("date_action", { ascending: true });
+      
+    actionsQuery = applyUserFilter(actionsQuery);
+    const { data: actionsData } = await actionsQuery;
 
-    setUpcomingActions((actionsData as any) || []);
+    setUpcomingActions(actionsData || []);
 
-    // Rappels = statut_action = 'a_relancer' avec relance_date
-    const { data: reminderData } = await supabase
+    let reminderQuery = supabase
       .from("actions")
       .select(
         "id, type, date_action, relance_date, commentaire, etablissement_id, etablissement:establishments(nom)"
@@ -192,18 +208,23 @@ const Dashboard = () => {
       .gte("relance_date", startStr)
       .lte("relance_date", endStr)
       .order("relance_date", { ascending: true });
+      
+    reminderQuery = applyUserFilter(reminderQuery);
+    const { data: reminderData } = await reminderQuery;
 
-    setReminders((reminderData as any) || []);
+    setReminders(reminderData || []);
   };
 
   const fetchSuggestions = async () => {
-    const { data } = await supabase
+    let query = supabase
       .from("suggestions")
       .select("*")
       .order("created_at", { ascending: false })
       .limit(50);
-
-    setSuggestions((data as any) || []);
+      
+    query = applyUserFilter(query);
+    const { data } = await query;
+    setSuggestions(data || []);
   };
 
   const fetchWeeklyActivity = async () => {
@@ -217,7 +238,7 @@ const Dashboard = () => {
     const startStr = format(weekMinus1Start, "yyyy-MM-dd");
     const endStr = format(weekPlus1End, "yyyy-MM-dd");
 
-    const { data } = await supabase
+    let query = supabase
       .from("actions")
       .select(
         "id, type, date_action, commentaire, etablissement_id, etablissement:establishments(nom)"
@@ -225,8 +246,11 @@ const Dashboard = () => {
       .gte("date_action", startStr)
       .lte("date_action", endStr)
       .order("date_action", { ascending: true });
+      
+    query = applyUserFilter(query);
+    const { data } = await query;
 
-    const buckets: Record<WeekKey, Action[]> = {
+    const buckets: Record<WeekKey, Action[] | any> = {
       "-1": [],
       "0": [],
       "1": [],
@@ -280,9 +304,11 @@ const Dashboard = () => {
 
   const refreshAll = () => {
     fetchStats();
-    fetchActionsAndReminders();
-    fetchWeeklyActivity();
-    fetchSuggestions();
+    if (selectedUserId) {
+      fetchActionsAndReminders();
+      fetchWeeklyActivity();
+      fetchSuggestions();
+    }
   };
 
   const renderActionRow = (action: Action) => {
@@ -354,7 +380,10 @@ const Dashboard = () => {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <Badge variant="secondary" className="text-xs font-medium bg-orange-100 text-orange-800">
+            <Badge
+              variant="secondary"
+              className="text-xs font-medium bg-orange-100 text-orange-800"
+            >
               Rappel · {label}
             </Badge>
           </div>
@@ -399,16 +428,16 @@ const Dashboard = () => {
 
   const renderWeeklyColumn = (weekKey: WeekKey, title: string) => {
     const list = weeklyActions[weekKey] || [];
-    const visites = list.filter((a) => a.type === "visite").length;
-    const rdv = list.filter((a) => a.type === "rdv").length;
+    const visites = list.filter((a: any) => a.type === "visite").length;
+    const rdv = list.filter((a: any) => a.type === "rdv").length;
 
-    const byType: Record<string, Action[]> = {
+    const byType: Record<string, Action[] | any> = {
       phoning: [],
       mailing: [],
       visite: [],
       rdv: [],
     };
-    list.forEach((a) => {
+    list.forEach((a: any) => {
       if (!byType[a.type]) byType[a.type] = [];
       byType[a.type].push(a);
     });
@@ -419,7 +448,7 @@ const Dashboard = () => {
       <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200">
         <CardHeader className="pb-3 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100">
           <div className="flex items-center justify-between gap-2">
-            <CardTitle className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+            <CardTitle className="flex items-center gap-3 text-sm font-semibold text-gray-900">
               <div className="p-1.5 rounded-lg bg-blue-50">
                 <Calendar className="h-4 w-4 text-blue-600" />
               </div>
@@ -474,7 +503,7 @@ const Dashboard = () => {
                     </Badge>
                   </div>
                   <ul className="space-y-1">
-                    {arr.map((a) => (
+                    {arr.map((a: any) => (
                       <li
                         key={a.id}
                         className="text-xs text-gray-600 truncate cursor-pointer hover:text-blue-600 hover:font-medium transition-all duration-150 pl-4"
@@ -505,88 +534,36 @@ const Dashboard = () => {
     );
   };
 
+  if (loadingUserView) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-blue-50/30">
+        <div className="text-center text-gray-600">Chargement de la vue utilisateur...</div>
+      </div>
+    );
+  }
+
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50/30 p-6">
-      <div className="max-w-7xl mx-auto space-y-8">
-        {/* Header moderne */}
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div className="space-y-2">
+    // Suppression de max-w-7xl mx-auto ici
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50/30 p-6 space-y-8">
+        
+        {/* NOUVEL EN-TÊTE UNIFORMISÉ (Header cohérent) */}
+        <div className="flex flex-col gap-2 mb-6">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-white shadow-sm border border-gray-200">
-                <Target className="h-6 w-6 text-blue-600" />
-              </div>
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900">Tableau de Bord</h1>
-                <p className="text-gray-600 mt-1">
-                  Vue d&apos;ensemble de l&apos;activité commerciale
-                </p>
-              </div>
+                <div className="p-2 bg-[#840404]/10 rounded-lg">
+                    <LayoutDashboard className="h-6 w-6 text-[#840404]" />
+                </div>
+                <div>
+                    <h1 className="text-2xl font-bold text-slate-900">
+                        Tableau de Bord
+                    </h1>
+                    <p className="text-slate-600">
+                        Vue d&apos;ensemble de l&apos;activité commerciale
+                    </p>
+                </div>
             </div>
-          </div>
-          
-          {/* Contrôles période */}
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex items-center gap-2">
-              <div className="inline-flex rounded-lg border border-gray-300 bg-white shadow-sm">
-                <Button
-                  type="button"
-                  variant={viewMode === "week" ? "default" : "ghost"}
-                  size="sm"
-                  className="h-8 px-3 text-xs font-medium"
-                  onClick={() => setViewMode("week")}
-                >
-                  Semaine
-                </Button>
-                <Button
-                  type="button"
-                  variant={viewMode === "month" ? "default" : "ghost"}
-                  size="sm"
-                  className="h-8 px-3 text-xs font-medium"
-                  onClick={() => setViewMode("month")}
-                >
-                  Mois
-                </Button>
-              </div>
-              
-              <div className="inline-flex rounded-lg border border-gray-300 bg-white shadow-sm">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 hover:bg-gray-100"
-                  onClick={() => setPeriodOffset((v) => v - 1)}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 px-3 text-xs font-medium hover:bg-gray-100"
-                  onClick={() => setPeriodOffset(0)}
-                >
-                  Aujourd&apos;hui
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 hover:bg-gray-100"
-                  onClick={() => setPeriodOffset((v) => v + 1)}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-            
-            <div className="flex items-center px-4 py-2 bg-white rounded-lg border border-gray-300 shadow-sm">
-              <Calendar className="h-4 w-4 text-gray-500 mr-2" />
-              <span className="text-sm font-medium text-gray-700">
-                {getRangeLabel()}
-              </span>
-            </div>
-          </div>
         </div>
+        {/* FIN DU NOUVEL EN-TÊTE */}
 
         {/* Stats en pleine largeur */}
         <DashboardStats
@@ -601,7 +578,9 @@ const Dashboard = () => {
             <div className="p-2 rounded-lg bg-white shadow-sm border border-gray-200">
               <Activity className="h-5 w-5 text-blue-600" />
             </div>
-            <h2 className="text-xl font-semibold text-gray-900">Suivi Opérationnel</h2>
+            <h2 className="text-xl font-semibold text-gray-900">
+              Suivi Opérationnel
+            </h2>
           </div>
 
           <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
@@ -632,7 +611,7 @@ const Dashboard = () => {
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
-                    {upcomingActions.map((action) =>
+                    {upcomingActions.map((action: any) =>
                       renderActionRow(action)
                     )}
                   </div>
@@ -667,7 +646,7 @@ const Dashboard = () => {
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
-                    {reminders.map((action) =>
+                    {reminders.map((action: any) =>
                       renderReminderRow(action)
                     )}
                   </div>
@@ -692,7 +671,7 @@ const Dashboard = () => {
                       </Badge>
                     )}
                   </div>
-                  <SuggestionForm onSuccess={fetchSuggestions} />
+                  <SuggestionForm onSuccess={refreshAll} />
                 </div>
               </CardHeader>
               <CardContent className="p-4">
@@ -702,18 +681,15 @@ const Dashboard = () => {
                     <p className="text-sm text-gray-500 mb-4">
                       Aucune suggestion pour le moment
                     </p>
-                    <SuggestionForm onSuccess={fetchSuggestions} />
+                    <SuggestionForm onSuccess={refreshAll} />
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
-                    {suggestions.map((s) => (
+                    {suggestions.map((s: any) => (
                       <SuggestionCard
                         key={s.id}
                         suggestion={s}
-                        onUpdate={() => {
-                          fetchSuggestions();
-                          fetchStats();
-                        }}
+                        onUpdate={refreshAll}
                       />
                     ))}
                   </div>
@@ -729,7 +705,9 @@ const Dashboard = () => {
             <div className="p-2 rounded-lg bg-white shadow-sm border border-gray-200">
               <TrendingUp className="h-5 w-5 text-green-600" />
             </div>
-            <h2 className="text-xl font-semibold text-gray-900">Synthèse d'Activité</h2>
+            <h2 className="text-xl font-semibold text-gray-900">
+              Synthèse d&apos;Activité
+            </h2>
           </div>
 
           <div className="grid gap-6 lg:grid-cols-3">
@@ -738,7 +716,6 @@ const Dashboard = () => {
             {renderWeeklyColumn("1", "Semaine prochaine")}
           </div>
         </section>
-      </div>
 
       <EstablishmentSheet
         establishmentId={selectedEstablishmentId}

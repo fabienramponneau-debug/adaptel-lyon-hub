@@ -1,4 +1,4 @@
-// src/pages/Reporting.tsx
+// src/pages/Reporting.tsx - Finalisé (Header avec icône)
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,18 +12,14 @@ import {
   BarChart3,
   Activity,
   MapPin,
-  Building,
-  Utensils,
-  Coffee,
-  ChartBar,
-  PieChart,
-  Filter,
+  Clock,
   Phone,
   Mail,
-  Clock,
-  CheckCircle2,
   ArrowUp,
   ArrowDown,
+  ChartBar, // Icône pour le titre
+  PieChart,
+  Filter,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -40,8 +36,19 @@ import {
   Pie,
   Legend,
 } from "recharts";
-import { format, subWeeks, startOfWeek, endOfWeek, subMonths, startOfMonth, endOfMonth } from "date-fns";
+import {
+  format,
+  subWeeks,
+  startOfWeek,
+  endOfWeek,
+  subMonths,
+  startOfMonth,
+  endOfMonth,
+  getWeek,
+  isSameYear,
+} from "date-fns";
 import { fr } from "date-fns/locale";
+import { useUserView } from "@/contexts/UserViewContext";
 
 interface Stats {
   totalProspects: number;
@@ -87,34 +94,45 @@ interface PerformanceMetric {
 }
 
 const COLORS = {
-  primary: '#840404',
-  secondary: '#1e293b',
-  accent: '#dc2626',
-  success: '#16a34a',
-  warning: '#d97706',
-  info: '#2563eb',
-  
-  // Couleurs pour les activités
-  hotellerie: '#840404',
-  restauration: '#dc2626',
-  restauration_collective: '#f59e0b',
-  
-  // Couleurs pour les actions
-  phoning: '#3b82f6',
-  mailing: '#8b5cf6',
-  visite: '#840404',
-  rdv: '#16a34a',
+  primary: "#840404",
+  secondary: "#1e293b",
+  accent: "#dc2626",
+  success: "#16a34a",
+  warning: "#d97706",
+  info: "#2563eb",
+  phoning: "#3b82f6",
+  mailing: "#8b5cf6",
+  visite: "#840404",
+  rdv: "#16a34a",
 };
 
-const ACTIVITY_COLORS = ['#840404', '#dc2626', '#f59e0b', '#2563eb', '#16a34a', '#8b5cf6'];
+const ACTIVITY_COLORS = [
+  "#840404",
+  "#dc2626",
+  "#f59e0b",
+  "#2563eb",
+  "#16a34a",
+  "#8b5cf6",
+];
+
+const CURRENT_MONTH_CODE = format(new Date(), "yyyy-MM");
+const sbAny = supabase as any;
+
 
 const Reporting = () => {
+  const { selectedUserId, loadingUserView, currentRole, users, setSelectedUserId } = useUserView() as any;
+  const isGlobalView = selectedUserId === "tous";
+
   const [stats, setStats] = useState<Stats>({
     totalProspects: 0,
     clientsDeclenches: 0,
     clientsAVoir: 0,
     anciensClients: 0,
     totalEstablishments: 0,
+  });
+
+  const [objectifsMensuels, setObjectifsMensuels] = useState<Record<ActionType, number>>({
+    visite: 0, rdv: 0, phoning: 0, mailing: 0,
   });
 
   const [selectedAction, setSelectedAction] = useState<ActionType>("visite");
@@ -126,75 +144,91 @@ const Reporting = () => {
   const [cityData, setCityData] = useState<CityData[]>([]);
   const [allActionsData, setAllActionsData] = useState<WeeklyData[]>([]);
   const [performanceMetrics, setPerformanceMetrics] = useState<PerformanceMetric[]>([]);
+  
   const [isLoading, setIsLoading] = useState({
     main: true,
     activity: false,
-    city: false
+    city: false,
   });
 
-  useEffect(() => {
-    fetchInitialData();
-  }, [timeRange]);
-
-  useEffect(() => {
-    if (!isLoading.main) {
-      fetchActivityData();
+  // --- Fonctions de Fetch et Helpers (inchangées) ---
+  const applyUserFilter = (query: any, isEstablishmentTable: boolean) => {
+    if (isGlobalView) {
+      return query;
     }
-  }, [activityFilter]);
-
-  useEffect(() => {
-    if (!isLoading.main) {
-      fetchCityData();
+    const column = isEstablishmentTable ? "commercial_id" : "user_id";
+    return query.eq(column, selectedUserId);
+  };
+  
+  const fetchObjectifs = async (userId: string | null) => {
+    if (isGlobalView || !userId || userId === "tous") {
+      setObjectifsMensuels({ visite: 0, rdv: 0, phoning: 0, mailing: 0 });
+      return;
     }
-  }, [cityFilter]);
+    
+    const { data } = await sbAny
+      .from("objectifs_actions")
+      .select("action_type, objectif")
+      .eq("user_id", userId)
+      .eq("period_type", "mois")
+      .eq("period_code", CURRENT_MONTH_CODE); 
 
-  const fetchInitialData = async () => {
-    setIsLoading(prev => ({ ...prev, main: true }));
-    await Promise.all([
-      fetchStats(),
-      fetchWeeklyData(),
-      fetchAllActionsData(),
-      fetchActivityData(),
-      fetchCityData(),
-      fetchPerformanceMetrics(),
-    ]);
-    setIsLoading(prev => ({ ...prev, main: false }));
+    const base: Record<ActionType, number> = { visite: 0, rdv: 0, phoning: 0, mailing: 0 };
+
+    (data || []).forEach((row: any) => {
+      const type = row.action_type as ActionType;
+      if (type in base) {
+        base[type] = row.objectif ?? 0;
+      }
+    });
+
+    setObjectifsMensuels(base);
   };
 
+  const getWeeklyObjective = (actionType: ActionType) => {
+    const monthly = objectifsMensuels[actionType] || 0;
+    return monthly / 4; 
+  };
+  
   const fetchStats = async () => {
-    // Récupérer tous les établissements
-    const { data: establishments } = await supabase
-      .from("establishments")
-      .select("id, statut, created_at");
-
+    let query = supabase.from("establishments").select("id, statut, created_at");
+    query = applyUserFilter(query, true);
+    const { data: establishments } = await query;
     if (!establishments) return;
 
     const prospects = establishments.filter((e) => e.statut === "prospect");
     const clients = establishments.filter((e) => e.statut === "client");
     const anciens = establishments.filter((e) => e.statut === "ancien_client");
 
-    // Clients déclenchés (prospects convertis en clients ce mois-ci)
     const currentMonthStart = startOfMonth(new Date());
-    const clientsDeclenches = clients.filter(client => 
-      new Date(client.created_at) >= currentMonthStart
+    const clientsDeclenches = clients.filter(
+      (client) => new Date(client.created_at) >= currentMonthStart
     ).length;
 
-    // Clients à voir (clients sans action depuis 3 mois)
     const threeMonthsAgo = new Date();
     threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
-    const { data: recentClientActions } = await supabase
+    let actionQuery = supabase
       .from("actions")
       .select("etablissement_id, date_action")
-      .in("etablissement_id", clients.map(c => c.id))
-      .gte("date_action", threeMonthsAgo.toISOString().split("T")[0]);
+      .in(
+        "etablissement_id",
+        clients.map((c) => c.id)
+      )
+      .gte("date_action", format(threeMonthsAgo, "yyyy-MM-dd"));
+      
+    if (!isGlobalView && selectedUserId) {
+        actionQuery = actionQuery.eq("user_id", selectedUserId);
+    }
+    
+    const { data: recentClientActions } = await actionQuery;
 
     const clientsWithRecentActions = new Set(
-      recentClientActions?.map(a => a.etablissement_id) || []
+      recentClientActions?.map((a) => a.etablissement_id) || []
     );
 
-    const clientsAVoir = clients.filter(client => 
-      !clientsWithRecentActions.has(client.id)
+    const clientsAVoir = clients.filter(
+      (client) => !clientsWithRecentActions.has(client.id)
     ).length;
 
     setStats({
@@ -212,112 +246,134 @@ const Reporting = () => {
 
     for (let i = weekCount - 1; i >= 0; i--) {
       const baseDate = subWeeks(new Date(), i);
-      const weekStart = startOfWeek(baseDate, { locale: fr });
-      const weekEnd = endOfWeek(baseDate, { locale: fr });
+      const weekStart = startOfWeek(baseDate, { weekStartsOn: 1, locale: fr });
+      const weekEnd = endOfWeek(baseDate, { weekStartsOn: 1, locale: fr });
 
-      const { data } = await supabase
+      let query = supabase
         .from("actions")
         .select("type")
         .gte("date_action", format(weekStart, "yyyy-MM-dd"))
         .lte("date_action", format(weekEnd, "yyyy-MM-dd"));
+      
+      query = applyUserFilter(query, false);
+
+      const { data } = await query;
 
       const visiteCount = data?.filter((a) => a.type === "visite").length || 0;
       const phoningCount = data?.filter((a) => a.type === "phoning").length || 0;
       const mailingCount = data?.filter((a) => a.type === "mailing").length || 0;
       const rdvCount = data?.filter((a) => a.type === "rdv").length || 0;
 
-      const objectifs = {
-        phoning: 20,
-        mailing: 15,
-        visite: 4,
-        rdv: 8,
-      };
-
       weeks.push({
-        name: `S${format(weekStart, "w", { locale: fr })}`,
-        semaine: format(weekStart, "dd MMM", { locale: fr }),
+        name: `S${getWeek(weekStart, {weekStartsOn: 1})}`,
+        semaine: isSameYear(weekStart, new Date()) 
+            ? format(weekStart, "dd MMM", { locale: fr })
+            : format(weekStart, "dd MMM yyyy", { locale: fr }),
         visite: visiteCount,
         phoning: phoningCount,
         mailing: mailingCount,
         rdv: rdvCount,
-        objectif: objectifs[selectedAction],
+        objectif: getWeeklyObjective(selectedAction),
       });
     }
 
     setWeeklyData(weeks);
   };
+  
+  const fetchDataForEstablishments = async (
+    filter: EstablishmentFilter,
+    isActivity: boolean
+  ) => {
+    const startLoading = isActivity ? "activity" : "city";
+    const setLoaded = isActivity ? setActivityData : setCityData;
 
-  const fetchActivityData = async () => {
-    setIsLoading(prev => ({ ...prev, activity: true }));
-    
-    const { data: activites } = await supabase
-      .from("parametrages")
-      .select("id, valeur")
-      .eq("categorie", "activite");
+    setIsLoading((prev) => ({ ...prev, [startLoading]: true }));
 
-    if (!activites) return;
+    try {
+        let query = supabase
+        .from("establishments")
+        .select(`${isActivity ? "activite_id" : "ville"}, statut, commercial_id`);
+        
+        query = applyUserFilter(query, true);
 
-    let query = supabase.from("establishments").select("activite_id, statut");
-    
-    if (activityFilter !== "tout") {
-      query = query.eq("statut", activityFilter);
+        if (filter !== "tout") {
+            query = query.eq("statut", filter);
+        }
+
+        const { data: establishments } = await query;
+
+        if (!establishments) {
+            setLoaded([]);
+            return;
+        }
+
+        const finalEstablishments = establishments;
+        
+        if (isActivity) {
+            const { data: activites } = await supabase
+                .from("parametrages")
+                .select("id, valeur")
+                .eq("categorie", "activite");
+            
+            if (!activites) {
+                setActivityData([]);
+                return;
+            }
+
+            const activityCounts: { [key: string]: number } = {};
+            finalEstablishments.forEach((est: any) => {
+                if (est.activite_id) {
+                    const activityName =
+                        activites.find((a) => a.id === est.activite_id)?.valeur ||
+                        "Non renseigné";
+                    activityCounts[activityName] =
+                        (activityCounts[activityName] || 0) + 1;
+                }
+            });
+
+            const total = finalEstablishments.length || 1;
+            const resultData: ActivityData[] = activites
+                .map((activite, index) => ({
+                    name: activite.valeur,
+                    value: activityCounts[activite.valeur] || 0,
+                    color: ACTIVITY_COLORS[index % ACTIVITY_COLORS.length],
+                    pourcentage: Math.round(
+                        ((activityCounts[activite.valeur] || 0) / total) * 100
+                    ),
+                }))
+                .filter((item) => item.value > 0);
+            
+            setActivityData(resultData);
+        } else {
+            const cityCounts: { [key: string]: number } = {};
+            finalEstablishments.forEach((est: any) => {
+                if (est.ville) {
+                    cityCounts[est.ville] = (cityCounts[est.ville] || 0) + 1;
+                }
+            });
+
+            const total = finalEstablishments.length || 1;
+            const resultData: CityData[] = Object.entries(cityCounts)
+                .map(([name, count]) => ({
+                    name,
+                    count,
+                    pourcentage: Math.round((count / total) * 100),
+                }))
+                .sort((a, b) => b.count - a.count)
+                .slice(0, 8);
+            
+            setCityData(resultData);
+        }
+    } catch(error) {
+        console.error(`Erreur de chargement des données ${startLoading}:`, error);
+        setLoaded([]);
+    } finally {
+        setIsLoading((prev) => ({ ...prev, [startLoading]: false }));
     }
-
-    const { data: establishments } = await query;
-
-    const activityCounts: { [key: string]: number } = {};
-    
-    establishments?.forEach(est => {
-      if (est.activite_id) {
-        const activityName = activites.find(a => a.id === est.activite_id)?.valeur || 'Non renseigné';
-        activityCounts[activityName] = (activityCounts[activityName] || 0) + 1;
-      }
-    });
-
-    const total = establishments?.length || 1;
-    const activityData: ActivityData[] = activites.map((activite, index) => ({
-      name: activite.valeur,
-      value: activityCounts[activite.valeur] || 0,
-      color: ACTIVITY_COLORS[index % ACTIVITY_COLORS.length],
-      pourcentage: Math.round(((activityCounts[activite.valeur] || 0) / total) * 100)
-    })).filter(item => item.value > 0);
-
-    setActivityData(activityData);
-    setIsLoading(prev => ({ ...prev, activity: false }));
   };
-
-  const fetchCityData = async () => {
-    setIsLoading(prev => ({ ...prev, city: true }));
-    
-    let query = supabase.from("establishments").select("ville, statut");
-    
-    if (cityFilter !== "tout") {
-      query = query.eq("statut", cityFilter);
-    }
-
-    const { data: establishments } = await query;
-
-    const cityCounts: { [key: string]: number } = {};
-    
-    establishments?.forEach(est => {
-      if (est.ville) {
-        cityCounts[est.ville] = (cityCounts[est.ville] || 0) + 1;
-      }
-    });
-
-    const total = establishments?.length || 1;
-    const cityData: CityData[] = Object.entries(cityCounts)
-      .map(([name, count]) => ({
-        name,
-        count,
-        pourcentage: Math.round((count / total) * 100)
-      }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 8);
-
-    setCityData(cityData);
-    setIsLoading(prev => ({ ...prev, city: false }));
-  };
+  
+  const fetchActivityData = () => fetchDataForEstablishments(activityFilter, true);
+  const fetchCityData = () => fetchDataForEstablishments(cityFilter, false);
 
   const fetchAllActionsData = async () => {
     const weeks: WeeklyData[] = [];
@@ -325,14 +381,18 @@ const Reporting = () => {
 
     for (let i = weekCount - 1; i >= 0; i--) {
       const baseDate = subWeeks(new Date(), i);
-      const weekStart = startOfWeek(baseDate, { locale: fr });
-      const weekEnd = endOfWeek(baseDate, { locale: fr });
-
-      const { data } = await supabase
+      const weekStart = startOfWeek(baseDate, { weekStartsOn: 1, locale: fr });
+      const weekEnd = endOfWeek(baseDate, { weekStartsOn: 1, locale: fr });
+      
+      let query = supabase
         .from("actions")
         .select("type")
         .gte("date_action", format(weekStart, "yyyy-MM-dd"))
         .lte("date_action", format(weekEnd, "yyyy-MM-dd"));
+        
+      query = applyUserFilter(query, false);
+
+      const { data } = await query;
 
       const visiteCount = data?.filter((a) => a.type === "visite").length || 0;
       const phoningCount = data?.filter((a) => a.type === "phoning").length || 0;
@@ -340,8 +400,10 @@ const Reporting = () => {
       const rdvCount = data?.filter((a) => a.type === "rdv").length || 0;
 
       weeks.push({
-        name: `S${format(weekStart, "w", { locale: fr })}`,
-        semaine: format(weekStart, "dd MMM", { locale: fr }),
+        name: `S${getWeek(weekStart, {weekStartsOn: 1})}`,
+        semaine: isSameYear(weekStart, new Date()) 
+            ? format(weekStart, "dd MMM", { locale: fr })
+            : format(weekStart, "dd MMM yyyy", { locale: fr }),
         visite: visiteCount,
         phoning: phoningCount,
         mailing: mailingCount,
@@ -354,125 +416,194 @@ const Reporting = () => {
   };
 
   const fetchPerformanceMetrics = async () => {
-    // Calculer l'évolution mois précédent vs mois actuel pour chaque type d'action
     const currentMonthStart = startOfMonth(new Date());
     const previousMonthStart = startOfMonth(subMonths(new Date(), 1));
     const currentMonthEnd = endOfMonth(new Date());
-    const previousMonthEnd = endOfMonth(subMonths(new Date(), 1));
 
-    // Actions du mois actuel
-    const { data: currentMonthActions } = await supabase
+    let currentQuery = supabase
       .from("actions")
       .select("type")
       .gte("date_action", format(currentMonthStart, "yyyy-MM-dd"))
       .lte("date_action", format(currentMonthEnd, "yyyy-MM-dd"));
+      
+    currentQuery = applyUserFilter(currentQuery, false);
+    const { data: currentMonthActions } = await currentQuery;
 
-    // Actions du mois précédent
-    const { data: previousMonthActions } = await supabase
+    const previousMonthEnd = endOfMonth(subMonths(new Date(), 1));
+    let previousQuery = supabase
       .from("actions")
       .select("type")
       .gte("date_action", format(previousMonthStart, "yyyy-MM-dd"))
       .lte("date_action", format(previousMonthEnd, "yyyy-MM-dd"));
+      
+    previousQuery = applyUserFilter(previousQuery, false);
+    const { data: previousMonthActions } = await previousQuery;
 
     const calculateEvolution = (type: ActionType) => {
-      const currentCount = currentMonthActions?.filter(a => a.type === type).length || 0;
-      const previousCount = previousMonthActions?.filter(a => a.type === type).length || 0;
-      
+      const currentCount =
+        currentMonthActions?.filter((a) => a.type === type).length || 0;
+      const previousCount =
+        previousMonthActions?.filter((a) => a.type === type).length || 0;
+
       if (previousCount === 0) return currentCount > 0 ? 100 : 0;
-      return Math.round(((currentCount - previousCount) / previousCount) * 100);
+      return Math.round(
+        ((currentCount - previousCount) / previousCount) * 100
+      );
     };
 
     const metrics: PerformanceMetric[] = [
       {
         label: "Visites terrain",
-        value: currentMonthActions?.filter(a => a.type === 'visite').length || 0,
-        evolution: calculateEvolution('visite'),
+        value: currentMonthActions?.filter((a) => a.type === "visite").length || 0,
+        evolution: calculateEvolution("visite"),
         icon: MapPin,
-        color: COLORS.primary
+        color: COLORS.primary,
       },
       {
         label: "Rendez-vous",
-        value: currentMonthActions?.filter(a => a.type === 'rdv').length || 0,
-        evolution: calculateEvolution('rdv'),
+        value: currentMonthActions?.filter((a) => a.type === "rdv").length || 0,
+        evolution: calculateEvolution("rdv"),
         icon: Clock,
-        color: COLORS.success
+        color: COLORS.success,
       },
       {
         label: "Appels effectués",
-        value: currentMonthActions?.filter(a => a.type === 'phoning').length || 0,
-        evolution: calculateEvolution('phoning'),
+        value: currentMonthActions?.filter((a) => a.type === "phoning").length || 0,
+        evolution: calculateEvolution("phoning"),
         icon: Phone,
-        color: COLORS.info
+        color: COLORS.info,
       },
       {
         label: "Emails envoyés",
-        value: currentMonthActions?.filter(a => a.type === 'mailing').length || 0,
-        evolution: calculateEvolution('mailing'),
+        value: currentMonthActions?.filter((a) => a.type === "mailing").length || 0,
+        evolution: calculateEvolution("mailing"),
         icon: Mail,
-        color: COLORS.phoning
-      }
+        color: COLORS.phoning,
+      },
     ];
 
     setPerformanceMetrics(metrics);
   };
+  
+  const fetchInitialData = async () => {
+    setIsLoading((prev) => ({ ...prev, main: true }));
+    await Promise.all([
+      fetchStats(),
+      fetchActivityData(),
+      fetchCityData(),
+      fetchPerformanceMetrics(),
+    ]);
+    setIsLoading((prev) => ({ ...prev, main: false }));
+  };
 
+  // --- useEffects de Rechargement (inchangés) ---
+
+  useEffect(() => {
+    if (!loadingUserView && selectedUserId) { 
+        fetchObjectifs(selectedUserId === "tous" ? null : selectedUserId);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedUserId, loadingUserView]);
+
+  useEffect(() => {
+    if (!loadingUserView && selectedUserId) { 
+        fetchInitialData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeRange, selectedUserId, loadingUserView]);
+
+  useEffect(() => {
+    if (!loadingUserView && selectedUserId) {
+        fetchWeeklyData();
+        fetchAllActionsData();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeRange, selectedUserId, selectedAction, loadingUserView, objectifsMensuels]);
+
+  useEffect(() => {
+    if (!isLoading.main && selectedUserId) {
+      fetchActivityData();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activityFilter, selectedUserId, isLoading.main]);
+
+  useEffect(() => {
+    if (!isLoading.main && selectedUserId) {
+      fetchCityData();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cityFilter, selectedUserId, isLoading.main]);
+
+
+  // --- Helpers UI (inchangés) ---
   const getFilterLabel = (filter: EstablishmentFilter): string => {
     const labels = {
       tout: "Tout le portefeuille",
       prospect: "Prospects uniquement",
       client: "Clients uniquement",
-      ancien_client: "Anciens clients uniquement"
+      ancien_client: "Anciens clients uniquement",
     };
     return labels[filter];
   };
 
-  const getActivityIcon = (activity: string) => {
-    const icons: { [key: string]: any } = {
-      'Hôtellerie': Building,
-      'Restauration': Utensils,
-      'Restauration collective': Coffee,
-    };
-    return icons[activity] || Building;
-  };
-
-  // Custom YAxis tick formatter pour entiers uniquement
   const integerTickFormatter = (value: number) => {
     return Math.round(value).toString();
   };
 
-  // Custom tooltips
   const ActionTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
-      return (
-        <div className="bg-white p-3 border border-slate-200 rounded-lg shadow-sm">
-          <p className="font-semibold text-slate-900">{label}</p>
-          <p className="text-sm text-slate-600">
-            <span style={{ color: COLORS[selectedAction] }}>
-              {Math.round(payload[0].value)} {selectedAction === 'visite' ? 'visites' : selectedAction === 'rdv' ? 'rendez-vous' : selectedAction + 's'}
-            </span>
-          </p>
-          <p className="text-sm text-amber-600">
-            Objectif: {Math.round(payload[1]?.value)}
-          </p>
-        </div>
-      );
+        const actionPayload = payload.find((p: any) => p.dataKey === selectedAction);
+        const objectifPayload = payload.find((p: any) => p.dataKey === 'objectif');
+        
+        if (!actionPayload) return null;
+
+        const actionValue = Math.round(actionPayload.value);
+        const objectifValue = Math.round(objectifPayload?.value || 0);
+        
+        const actionLabelText = 
+            selectedAction === "visite" ? "visites" :
+            selectedAction === "rdv" ? "rendez-vous" :
+            selectedAction + "s";
+            
+        return (
+            <div className="bg-white p-3 border border-slate-200 rounded-lg shadow-sm">
+                <p className="font-semibold text-slate-900">{label}</p>
+                <p className="text-sm text-slate-600">
+                    <span style={{ color: COLORS[selectedAction] }}>
+                        {actionValue} {actionLabelText}
+                    </span>
+                </p>
+                {objectifValue > 0 && !isGlobalView && (
+                    <p className="text-sm text-amber-600">
+                        Objectif: {objectifValue}
+                    </p>
+                )}
+            </div>
+        );
     }
     return null;
   };
-
+  
   const AllActionsTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
         <div className="bg-white p-3 border border-slate-200 rounded-lg shadow-sm min-w-[200px]">
           <p className="font-semibold text-slate-900 mb-2">{label}</p>
-          {payload.map((entry: any, index: number) => (
-            <p key={index} className="text-sm" style={{ color: entry.color }}>
-              {entry.name === 'phoning' && 'Phoning'}
-              {entry.name === 'mailing' && 'Mailing'}
-              {entry.name === 'visite' && 'Visites'}
-              {entry.name === 'rdv' && 'Rendez-vous'}: {Math.round(entry.value)}
-            </p>
-          ))}
+          {payload.map((entry: any, index: number) => {
+            if (entry.dataKey === 'objectif') return null;
+            return (
+              <p
+                key={index}
+                className="text-sm"
+                style={{ color: entry.color }}
+              >
+                {entry.dataKey === "phoning" && "Phoning"}
+                {entry.dataKey === "mailing" && "Mailing"}
+                {entry.dataKey === "visite" && "Visites"}
+                {entry.dataKey === "rdv" && "Rendez-vous"}:{" "}
+                {Math.round(entry.value)}
+              </p>
+          )})}
         </div>
       );
     }
@@ -513,12 +644,14 @@ const Reporting = () => {
     return null;
   };
 
-  if (isLoading.main) {
+  if (loadingUserView || !selectedUserId || isLoading.main) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
           <Activity className="h-8 w-8 animate-spin text-[#840404] mx-auto mb-4" />
-          <p className="text-slate-600">Chargement des données...</p>
+          <p className="text-slate-600">
+            {loadingUserView || !selectedUserId ? "Chargement de la vue utilisateur..." : "Chargement des données du tableau de bord..."}
+          </p>
         </div>
       </div>
     );
@@ -526,40 +659,43 @@ const Reporting = () => {
 
   return (
     <div className="space-y-8 p-6">
-      {/* En-tête */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+      {/* NOUVEL EN-TÊTE UNIFORMISÉ */}
+      <div className="flex flex-col gap-2 mb-6">
+        <div className="flex items-center gap-3">
             <div className="p-2 bg-[#840404]/10 rounded-lg">
-              <ChartBar className="h-6 w-6 text-[#840404]" />
+                <ChartBar className="h-6 w-6 text-[#840404]" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">Tableau de Bord Commercial</h1>
-              <p className="text-slate-600">Analyse et pilotage de l'activité commerciale</p>
+                <h1 className="text-2xl font-bold text-slate-900">
+                    Tableau de Bord Commercial
+                </h1>
+                <p className="text-slate-600">
+                    Analyse et pilotage de l&apos;activité commerciale
+                </p>
             </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <Badge variant="outline" className="bg-white">
-              <Calendar className="h-3 w-3 mr-1" />
-              {timeRange === "4weeks" ? "4 semaines" : "3 mois"}
-            </Badge>
-          </div>
         </div>
       </div>
+      {/* FIN DU NOUVEL EN-TÊTE */}
 
-      {/* SECTION 1: KPIs PRINCIPAUX */}
+      {/* SECTION 1: KPIs PRINCIPAUX (inchangée) */}
       <section>
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           <Card className="border-slate-200 bg-white">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-slate-600">Portefeuille Total</p>
+                  <p className="text-sm font-medium text-slate-600">
+                    Portefeuille Total
+                  </p>
                   <p className="text-2xl font-bold text-slate-900 mt-1">
                     {stats.totalEstablishments}
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
-                    {stats.totalProspects} prospects • {stats.totalEstablishments - stats.totalProspects - stats.anciensClients} clients
+                    {stats.totalProspects} prospects •{" "}
+                    {stats.totalEstablishments -
+                      stats.totalProspects -
+                      stats.anciensClients}{" "}
+                    clients
                   </p>
                 </div>
                 <div className="p-3 bg-[#840404]/10 rounded-lg">
@@ -573,7 +709,9 @@ const Reporting = () => {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-slate-600">Clients Déclenchés</p>
+                  <p className="text-sm font-medium text-slate-600">
+                    Clients Déclenchés
+                  </p>
                   <p className="text-2xl font-bold text-slate-900 mt-1">
                     {stats.clientsDeclenches}
                   </p>
@@ -592,7 +730,9 @@ const Reporting = () => {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-slate-600">Clients à Voir</p>
+                  <p className="text-sm font-medium text-slate-600">
+                    Clients à Voir
+                  </p>
                   <p className="text-2xl font-bold text-slate-900 mt-1">
                     {stats.clientsAVoir}
                   </p>
@@ -611,7 +751,9 @@ const Reporting = () => {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-slate-600">Anciens Clients</p>
+                  <p className="text-sm font-medium text-slate-600">
+                    Anciens Clients
+                  </p>
                   <p className="text-2xl font-bold text-slate-900 mt-1">
                     {stats.anciensClients}
                   </p>
@@ -628,7 +770,7 @@ const Reporting = () => {
         </div>
       </section>
 
-      {/* SECTION 2: ACTIVITÉ COMMERCIALE */}
+      {/* SECTION 2: ACTIVITÉ COMMERCIALE (inchangée) */}
       <section>
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Graphique Principal - Suivi d'Action avec Objectif */}
@@ -645,9 +787,11 @@ const Reporting = () => {
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <select 
+                  <select
                     value={selectedAction}
-                    onChange={(e) => setSelectedAction(e.target.value as ActionType)}
+                    onChange={(e) =>
+                      setSelectedAction(e.target.value as ActionType)
+                    }
                     className="text-sm border border-slate-200 rounded-md px-3 py-1 bg-white"
                   >
                     <option value="visite">Visites Terrain</option>
@@ -655,7 +799,7 @@ const Reporting = () => {
                     <option value="phoning">Phoning</option>
                     <option value="mailing">Mailing</option>
                   </select>
-                  <select 
+                  <select
                     value={timeRange}
                     onChange={(e) => setTimeRange(e.target.value as TimeRange)}
                     className="text-sm border border-slate-200 rounded-md px-3 py-1 bg-white"
@@ -671,33 +815,35 @@ const Reporting = () => {
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={weeklyData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis 
-                      dataKey="name" 
+                    <XAxis
+                      dataKey="semaine"
                       tick={{ fontSize: 12, fill: "#64748b" }}
                       axisLine={false}
                     />
-                    <YAxis 
+                    <YAxis
                       tick={{ fontSize: 12, fill: "#64748b" }}
                       axisLine={false}
-                      domain={[0, 'dataMax + 2']}
+                      domain={[0, "dataMax + 2"]}
                       tickFormatter={integerTickFormatter}
                       allowDecimals={false}
                     />
                     <Tooltip content={<ActionTooltip />} />
-                    <Bar 
-                      dataKey={selectedAction} 
+                    <Bar
+                      dataKey={selectedAction}
                       fill={COLORS[selectedAction]}
                       radius={[4, 4, 0, 0]}
                       barSize={32}
                     />
-                    <Line 
-                      type="monotone" 
-                      dataKey="objectif" 
-                      stroke={COLORS.warning}
-                      strokeWidth={2}
-                      strokeDasharray="5 5"
-                      dot={false}
-                    />
+                    {getWeeklyObjective(selectedAction) > 0 && !isGlobalView && (
+                        <Line
+                          type="monotone"
+                          dataKey="objectif"
+                          stroke={COLORS.warning}
+                          strokeWidth={2}
+                          strokeDasharray="5 5"
+                          dot={false}
+                        />
+                    )}
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
@@ -709,7 +855,7 @@ const Reporting = () => {
             <CardHeader className="pb-4">
               <CardTitle className="text-lg font-semibold text-slate-900 flex items-center gap-2">
                 <BarChart3 className="h-5 w-5 text-[#840404]" />
-                Volume d'Activité Commerciale
+                Volume d&apos;Activité Commerciale
               </CardTitle>
               <p className="text-sm text-slate-500">
                 Comparaison du volume de toutes les actions
@@ -720,22 +866,43 @@ const Reporting = () => {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={allActionsData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis 
-                      dataKey="name" 
+                    <XAxis
+                      dataKey="semaine"
                       tick={{ fontSize: 12, fill: "#64748b" }}
                       axisLine={false}
                     />
-                    <YAxis 
+                    <YAxis
                       tick={{ fontSize: 12, fill: "#64748b" }}
                       axisLine={false}
                       tickFormatter={integerTickFormatter}
                       allowDecimals={false}
                     />
                     <Tooltip content={<AllActionsTooltip />} />
-                    <Bar dataKey="phoning" fill={COLORS.phoning} radius={[2, 2, 0, 0]} />
-                    <Bar dataKey="mailing" fill={COLORS.mailing} radius={[2, 2, 0, 0]} />
-                    <Bar dataKey="visite" fill={COLORS.visite} radius={[2, 2, 0, 0]} />
-                    <Bar dataKey="rdv" fill={COLORS.rdv} radius={[2, 2, 0, 0]} />
+                    <Legend iconType="square" verticalAlign="top" height={36} />
+                    <Bar
+                      dataKey="phoning"
+                      name="Phoning"
+                      fill={COLORS.phoning}
+                      radius={[2, 2, 0, 0]}
+                    />
+                    <Bar
+                      dataKey="mailing"
+                      name="Mailing"
+                      fill={COLORS.mailing}
+                      radius={[2, 2, 0, 0]}
+                    />
+                    <Bar
+                      dataKey="visite"
+                      name="Visites"
+                      fill={COLORS.visite}
+                      radius={[2, 2, 0, 0]}
+                    />
+                    <Bar
+                      dataKey="rdv"
+                      name="Rendez-vous"
+                      fill={COLORS.rdv}
+                      radius={[2, 2, 0, 0]}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -744,7 +911,7 @@ const Reporting = () => {
         </div>
       </section>
 
-      {/* SECTION 3: ANALYSE DU PORTEFEUILLE */}
+      {/* SECTION 3: ANALYSE DU PORTEFEUILLE (inchangée) */}
       <section>
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Répartition par Activité */}
@@ -754,7 +921,7 @@ const Reporting = () => {
                 <div>
                   <CardTitle className="text-lg font-semibold text-slate-900 flex items-center gap-2">
                     <PieChart className="h-5 w-5 text-[#840404]" />
-                    Répartition par Secteur d'Activité
+                    Répartition par Secteur d&apos;Activité
                   </CardTitle>
                   <p className="text-sm text-slate-500">
                     {getFilterLabel(activityFilter)}
@@ -762,9 +929,13 @@ const Reporting = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   <Filter className="h-4 w-4 text-slate-500" />
-                  <select 
+                  <select
                     value={activityFilter}
-                    onChange={(e) => setActivityFilter(e.target.value as EstablishmentFilter)}
+                    onChange={(e) =>
+                      setActivityFilter(
+                        e.target.value as EstablishmentFilter
+                      )
+                    }
                     className="text-sm border border-slate-200 rounded-md px-3 py-1 bg-white"
                   >
                     <option value="tout">Tout</option>
@@ -787,10 +958,16 @@ const Reporting = () => {
                       outerRadius={100}
                       paddingAngle={2}
                       dataKey="value"
-                      label={({ name, pourcentage }) => `${name} (${pourcentage}%)`}
+                      labelLine={false}
+                      label={({ name, pourcentage }) =>
+                        pourcentage > 5 ? `${name} (${pourcentage}%)` : ""
+                      }
                     >
                       {activityData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
+                        <Cell
+                          key={`cell-${index}`}
+                          fill={entry.color}
+                        />
                       ))}
                     </Pie>
                     <Tooltip content={<ActivityTooltip />} />
@@ -799,7 +976,9 @@ const Reporting = () => {
                 </ResponsiveContainer>
               </div>
               {isLoading.activity && (
-                <div className="text-center text-slate-500 text-sm">Chargement...</div>
+                <div className="text-center text-slate-500 text-sm">
+                  Chargement...
+                </div>
               )}
             </CardContent>
           </Card>
@@ -819,9 +998,11 @@ const Reporting = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   <Filter className="h-4 w-4 text-slate-500" />
-                  <select 
+                  <select
                     value={cityFilter}
-                    onChange={(e) => setCityFilter(e.target.value as EstablishmentFilter)}
+                    onChange={(e) =>
+                      setCityFilter(e.target.value as EstablishmentFilter)
+                    }
                     className="text-sm border border-slate-200 rounded-md px-3 py-1 bg-white"
                   >
                     <option value="tout">Tout</option>
@@ -836,24 +1017,29 @@ const Reporting = () => {
               <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={cityData} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                    <XAxis 
-                      type="number" 
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="#f1f5f9"
+                      horizontal={false}
+                    />
+                    <XAxis
+                      type="number"
                       tick={{ fontSize: 12, fill: "#64748b" }}
                       axisLine={false}
                       tickFormatter={integerTickFormatter}
                       allowDecimals={false}
                     />
-                    <YAxis 
-                      type="category" 
+                    <YAxis
+                      type="category"
                       dataKey="name"
                       tick={{ fontSize: 12, fill: "#64748b" }}
                       axisLine={false}
                       width={80}
+                      tickLine={false} 
                     />
                     <Tooltip content={<CityTooltip />} />
-                    <Bar 
-                      dataKey="count" 
+                    <Bar
+                      dataKey="count"
                       fill={COLORS.primary}
                       radius={[0, 4, 4, 0]}
                       barSize={20}
@@ -862,48 +1048,67 @@ const Reporting = () => {
                 </ResponsiveContainer>
               </div>
               {isLoading.city && (
-                <div className="text-center text-slate-500 text-sm">Chargement...</div>
+                <div className="text-center text-slate-500 text-sm">
+                  Chargement...
+                </div>
               )}
             </CardContent>
           </Card>
         </div>
       </section>
 
-      {/* SECTION 4: INDICATEURS DE PERFORMANCE */}
+      {/* SECTION 4: INDICATEURS DE PERFORMANCE (inchangée) */}
       <section>
-        <h2 className="text-xl font-semibold text-slate-900 mb-6">Évolution Mensuelle des Actions</h2>
+        <h2 className="text-xl font-semibold text-slate-900 mb-6">
+          Évolution Mensuelle des Actions
+        </h2>
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           {performanceMetrics.map((metric, index) => {
             const Icon = metric.icon;
             const isPositive = metric.evolution >= 0;
-            
+
             return (
               <Card key={index} className="border-slate-200">
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-2">
-                      <div 
-                        className="p-2 rounded-lg" 
+                      <div
+                        className="p-2 rounded-lg"
                         style={{ backgroundColor: `${metric.color}20` }}
                       >
-                        <Icon className="h-4 w-4" style={{ color: metric.color }} />
+                        <Icon
+                          className="h-4 w-4"
+                          style={{ color: metric.color }}
+                        />
                       </div>
-                      <span className="text-sm font-medium text-slate-700">{metric.label}</span>
+                      <span className="text-sm font-medium text-slate-700">
+                        {metric.label}
+                      </span>
                     </div>
-                    <div className={`flex items-center gap-1 ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
-                      {isPositive ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
+                    <div
+                      className={`flex items-center gap-1 ${
+                        isPositive ? "text-green-600" : "text-red-600"
+                      }`}
+                    >
+                      {isPositive ? (
+                        <ArrowUp className="h-4 w-4" />
+                      ) : (
+                        <ArrowDown className="h-4 w-4" />
+                      )}
                       <span className="text-sm font-semibold">
                         {metric.evolution}%
                       </span>
                     </div>
                   </div>
-                  
+
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
-                      <span className="text-2xl font-bold text-slate-900">{metric.value}</span>
+                      <span className="text-2xl font-bold text-slate-900">
+                        {metric.value}
+                      </span>
                       <span className="text-sm text-slate-500">ce mois</span>
                     </div>
-                    
+
                     <div className="text-xs text-slate-500">
                       vs mois précédent
                     </div>

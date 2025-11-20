@@ -1,122 +1,63 @@
-import { ReactNode, useEffect, useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+// src/components/Layout.tsx - CORRIGÉ (Résout l'erreur TS2339 proprement)
+import { useEffect, ReactNode } from "react";
+import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { Session } from "@supabase/supabase-js";
-import { Building2, Bell, ChevronDown, Settings } from "lucide-react";
-import { NavLink } from "@/components/NavLink";
-import { cn } from "@/lib/utils";
+import { Building2, Bell, ChevronDown, LogOut, Briefcase, Calendar, BarChart3, Sliders } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { useUserView } from "@/contexts/UserViewContext"; // Import du contexte correct
+import { NavLink } from "@/components/NavLink";
+import { cn } from "@/lib/utils";
 
 interface LayoutProps {
   children: ReactNode;
 }
 
 const navItems = [
-  { label: "Dashboard", path: "/", icon: "📊" },
-  { label: "Portefeuille", path: "/etablissements", icon: "🏢" },
-  { label: "Prospection", path: "/prospection", icon: "🎯" },
-  { label: "Reporting", path: "/reporting", icon: "📈" },
-  { label: "Paramétrage", path: "/parametrage", icon: "⚙️" },
+    { label: "Dashboard", path: "/", icon: "📊" },
+    { label: "Portefeuille", path: "/etablissements", icon: "🏢" },
+    { label: "Prospection", path: "/prospection", icon: "🎯" },
+    { label: "Reporting", path: "/reporting", icon: "📈" },
+    { label: "Paramétrage", path: "/parametrage", icon: "⚙️" },
 ];
 
 export const Layout = ({ children }: LayoutProps) => {
   const navigate = useNavigate();
-  const location = useLocation();
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [displayName, setDisplayName] = useState<string>("");
 
+  // TS2339 CORRIGÉ: profile est maintenant dans UserViewContextValue
+  const { 
+    currentUserId, 
+    currentRole, 
+    profile, // Profile est récupéré ici sans erreur
+    loadingUserView,
+    selectedUserId, 
+    setSelectedUserId, 
+    users 
+  } = useUserView(); 
+
+  // Redirection si non connecté (inchangé)
   useEffect(() => {
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_, session) => {
-      setSession(session);
-      if (!session) {
+    if (!loadingUserView && !currentUserId) {
         navigate("/auth");
-      }
-    });
+    }
+  }, [loadingUserView, currentUserId, navigate]);
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (!session) {
-        navigate("/auth");
-      }
-      setLoading(false);
-    });
+  // Calcul du nom affiché (utilise le profile exposé)
+  const displayName = profile 
+    ? `${profile.prenom ?? ""} ${profile.nom ?? ""}`.trim() || "Utilisateur"
+    : "Utilisateur";
 
-    return () => subscription.unsubscribe();
-  }, [navigate]);
+  if (loadingUserView) return null;
 
-  // Récupération du nom à afficher (metadata -> profiles -> fallback email)
-  useEffect(() => {
-    const computeDisplayName = async () => {
-      if (!session) {
-        setDisplayName("Utilisateur");
-        return;
-      }
+  if (!currentUserId) return null;
 
-      const meta = (session.user.user_metadata || {}) as any;
-      const email = session.user.email || "";
-      const fallbackFromEmail =
-        email && email.includes("@")
-          ? email.split("@")[0].replace(".", " ")
-          : "Utilisateur";
-
-      // 1) Si le metadata a déjà prenom/nom (cas Lovable initial)
-      if (meta.prenom || meta.nom) {
-        const fullName = `${meta.prenom ? meta.prenom : ""} ${
-          meta.nom ? meta.nom : ""
-        }`.trim();
-        setDisplayName(fullName || fallbackFromEmail);
-        return;
-      }
-
-      // 2) Sinon on va chercher dans public.profiles
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("prenom, nom")
-        .eq("id", session.user.id)
-        .maybeSingle();
-
-      if (error) {
-        console.error("Erreur chargement profil :", error.message);
-        setDisplayName(fallbackFromEmail);
-        return;
-      }
-
-      if (data && (data.prenom || data.nom)) {
-        const fullName = `${data.prenom ?? ""} ${data.nom ?? ""}`.trim();
-        setDisplayName(fullName || fallbackFromEmail);
-      } else {
-        setDisplayName(fallbackFromEmail);
-      }
-    };
-
-    computeDisplayName();
-  }, [session]);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
-        <div className="text-center space-y-4">
-          <div className="relative">
-            <div className="h-16 w-16 rounded-2xl bg-gradient-to-r from-[#840404] to-[#a00606] animate-pulse"></div>
-            <div className="absolute inset-0 border-2 border-[#840404]/20 rounded-2xl animate-spin"></div>
-          </div>
-          <p className="text-slate-600 font-medium">Chargement...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!session) return null;
-
-  const email = session.user.email || "";
+  const email = profile?.email || ""; 
   const initial =
     displayName && displayName.trim().length > 0
       ? displayName.trim().charAt(0).toUpperCase()
@@ -126,31 +67,57 @@ export const Layout = ({ children }: LayoutProps) => {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    navigate("/auth");
   };
+  
+  // Rendu du sélecteur Admin
+  const renderAdminUserSelector = () => {
+    if (currentRole !== "admin") return null;
+
+    return (
+        <div className="hidden lg:flex items-center gap-2 mr-4 border-r pr-4">
+            <span className="text-xs font-medium text-slate-500">Vue :</span>
+            <select
+                className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm focus:border-[#840404]"
+                value={selectedUserId || "tous"}
+                onChange={(e) => setSelectedUserId(e.target.value)}
+            >
+                <option value="tous">Tous les commerciaux</option>
+                {users
+                    .filter(u => u.id !== 'tous')
+                    .map((u) => (
+                        <option key={u.id} value={u.id}>
+                            {u.label}
+                        </option>
+                    ))}
+            </select>
+        </div>
+    );
+  };
+
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 via-white to-slate-100/70">
       {/* Header moderne avec glass morphism */}
       <header className="sticky top-0 z-50 h-16 bg-white/80 backdrop-blur-xl border-b border-slate-200/60 shadow-sm">
         <div className="w-full h-full px-6 lg:px-8 flex items-center justify-between">
-          {/* Logo et nom */}
-          <div className="flex items-center gap-3">
+          
+          {/* Logo et nom App (Uniformisé) */}
+          <Link to="/" className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#840404] to-[#a00606] shadow-lg flex items-center justify-center">
               <Building2 className="h-5 w-5 text-white" />
             </div>
             <div className="flex flex-col leading-tight">
               <span className="font-bold text-lg bg-gradient-to-r from-slate-900 to-slate-700 bg-clip-text text-transparent">
-                ADAPTEL Lyon
+                ADAPTEL CRM
               </span>
               <span className="text-xs text-slate-500 font-medium">
-                CRM Clients
+                {currentRole === "admin" ? "Administration" : "Commercial"}
               </span>
             </div>
-          </div>
-
-          {/* Navigation centrale */}
-          <div className="flex-1 flex flex-col items-center justify-center max-w-2xl">
+          </Link>
+          
+          {/* Navigation Centrale (Desktop) */}
+          <div className="flex-1 hidden lg:flex flex-col items-center justify-center max-w-2xl">
             <nav className="flex items-center gap-1 bg-slate-100/80 rounded-xl p-1 backdrop-blur-sm">
               {navItems.map((item) => (
                 <NavLink
@@ -172,6 +139,10 @@ export const Layout = ({ children }: LayoutProps) => {
 
           {/* Actions utilisateur */}
           <div className="flex items-center gap-3">
+            
+            {/* SÉLECTEUR ADMIN */}
+            {renderAdminUserSelector()}
+
             {/* Notifications */}
             <button
               type="button"
@@ -179,21 +150,22 @@ export const Layout = ({ children }: LayoutProps) => {
               onClick={() => navigate("/")}
             >
               <Bell className="h-4 w-4 text-slate-600" />
-              <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 border-2 border-white"></span>
             </button>
 
             {/* Profil utilisateur avec dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-2 rounded-xl p-1.5 hover:bg-slate-100/80 transition-colors duration-200">
-                  <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-[#840404] to-[#a00606] flex items-center justify-center text-xs font-semibold text-white shadow-sm">
-                    {initial}
-                  </div>
+                  <Avatar className="h-8 w-8">
+                    <AvatarFallback className="bg-[#840404] text-white text-sm">
+                      {initial}
+                    </AvatarFallback>
+                  </Avatar>
                   <div className="hidden sm:flex flex-col items-start leading-tight">
                     <span className="text-sm font-semibold text-slate-900">
                       {displayName || "Utilisateur"}
                     </span>
-                    <span className="text-xs text-slate-500">En ligne</span>
+                    <span className="text-xs text-slate-500">{currentRole === 'admin' ? "Admin" : "Commercial"}</span>
                   </div>
                   <ChevronDown className="h-4 w-4 text-slate-400" />
                 </button>
@@ -202,15 +174,11 @@ export const Layout = ({ children }: LayoutProps) => {
                 align="end"
                 className="w-56 rounded-xl shadow-lg border-slate-200"
               >
-                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer">
-                  <Settings className="h-4 w-4" />
-                  Paramètres du compte
-                </DropdownMenuItem>
-                <DropdownMenuItem
+                <DropdownMenuItem 
                   className="flex items-center gap-2 cursor-pointer text-red-600 focus:text-red-600"
                   onClick={handleLogout}
                 >
-                  <span>🚪</span>
+                  <LogOut className="h-4 w-4 mr-2" />
                   Déconnexion
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -221,6 +189,7 @@ export const Layout = ({ children }: LayoutProps) => {
 
       {/* Contenu principal */}
       <main className="flex-1 w-full">
+        {/* Correction UX: Ajout d'un padding horizontal cohérent */}
         <div className="w-full px-6 lg:px-8 py-6">{children}</div>
       </main>
     </div>

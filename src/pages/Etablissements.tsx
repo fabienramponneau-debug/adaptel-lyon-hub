@@ -1,4 +1,4 @@
-// src/pages/Etablissements.tsx
+// src/pages/Etablissements.tsx - Finalisé (Résout TS2589 & Marges)
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -16,6 +16,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -45,6 +46,7 @@ import StatsCards from "@/components/StatsCards";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
+import { useUserView } from "@/contexts/UserViewContext";
 
 interface ParamValue {
   valeur: string;
@@ -55,6 +57,7 @@ interface Establishment {
   nom: string;
   ville: string | null;
   statut: "prospect" | "client" | "ancien_client";
+  actif: boolean; 
   groupe: ParamValue | null;
   secteur: ParamValue | null;
   activite: ParamValue | null;
@@ -68,12 +71,16 @@ interface Parametrage {
 
 const NONE_VALUE = "none";
 
-type StatutFilter = "all" | "prospect" | "client" | "ancien_client";
+type StatutFilter = "all" | "prospect" | "client" | "ancien_client" | "archived";
 type ActionType = "phoning" | "mailing" | "visite" | "rdv";
 type ActionStatut = "a_venir" | "effectue";
 
 export default function Etablissements() {
-  const [rows, setRows] = useState<Establishment[]>([]);
+  const { selectedUserId, loadingUserView } = useUserView() as any;
+  const isGlobalView = selectedUserId === "tous"; 
+  
+  // Correction TS2589: On utilise le type 'any' sur l'état pour contourner l'erreur de type récursif
+  const [rows, setRows] = useState<Establishment[] | any>([]); 
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -88,7 +95,7 @@ export default function Etablissements() {
     activites: [],
   });
 
-  // Filtres
+  // Filtres (inchangés)
   const [q, setQ] = useState("");
   const [qDeb, setQDeb] = useState("");
   const [fStatut, setFStatut] = useState<StatutFilter>("all");
@@ -97,7 +104,7 @@ export default function Etablissements() {
   const [fActivite, setFActivite] = useState("all");
   const [fVille, setFVille] = useState("all");
 
-  // Création rapide
+  // Création rapide (inchangée)
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickLoading, setQuickLoading] = useState(false);
   const [quickForm, setQuickForm] = useState<{
@@ -127,7 +134,7 @@ export default function Etablissements() {
     date: new Date().toISOString().split("T")[0],
   });
 
-  // debounce recherche
+  // debounce recherche (inchangé)
   const tRef = useRef<number | null>(null);
   useEffect(() => {
     if (tRef.current) clearTimeout(tRef.current);
@@ -137,25 +144,48 @@ export default function Etablissements() {
     );
   }, [q]);
 
+  // Déclenchement du fetch
   useEffect(() => {
-    fetchRows();
+    if (!loadingUserView && selectedUserId) {
+        fetchRows();
+    }
     fetchParametrages();
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedUserId, loadingUserView, fStatut]); 
+
 
   async function fetchRows() {
     setLoading(true);
-    const { data, error } = await supabase
+    
+    let query = supabase
       .from("establishments")
       .select(
         `
-        id, nom, ville, statut,
+        id, nom, ville, statut, actif,
         groupe:groupe_id(valeur),
         secteur:secteur_id(valeur),
         activite:activite_id(valeur)
       `
       )
       .order("nom", { ascending: true });
+      
+    // 1. Filtrage par Commercial
+    if (!isGlobalView && selectedUserId && selectedUserId !== 'tous') {
+        query = query.eq('commercial_id', selectedUserId);
+    }
+    
+    // 2. Filtration par statut (actif/archivé)
+    if (fStatut === 'archived') {
+        query = query.eq('actif', false);
+    } else {
+        query = query.eq('actif', true);
+        if (fStatut !== 'all') {
+            query = query.eq('statut', fStatut);
+        }
+    }
 
+    const { data, error } = await query;
+    
     if (!error) setRows((data || []) as any);
     setLoading(false);
   }
@@ -174,13 +204,13 @@ export default function Etablissements() {
     }
   }
 
-  const uniq = useMemo(() => {
-    const g = new Set<string>(),
-      s = new Set<string>(),
-      a = new Set<string>(),
-      v = new Set<string>();
+ const uniq = useMemo(() => {
+    // CORRECTION TS2589: On cast explicitement le tableau pour briser la boucle de vérification de type
+    const activeRows = (rows as any[]).filter((r: any) => r.actif); 
+    
+    const g = new Set<string>(), s = new Set<string>(), a = new Set<string>(), v = new Set<string>();
 
-    rows.forEach((r) => {
+    activeRows.forEach((r) => {
       if (r.groupe?.valeur) g.add(r.groupe.valeur);
       if (r.secteur?.valeur) s.add(r.secteur.valeur);
       if (r.activite?.valeur) a.add(r.activite.valeur);
@@ -196,8 +226,10 @@ export default function Etablissements() {
   }, [rows]);
 
   const filtered = useMemo(
+    // CORRECTION TS2589: On cast explicitement le tableau pour briser la boucle de vérification de type
     () =>
-      rows.filter((r) => {
+      (rows as any[]).filter((r) => { 
+        
         const hit =
           !qDeb ||
           r.nom.toLowerCase().includes(qDeb) ||
@@ -206,20 +238,16 @@ export default function Etablissements() {
           r.secteur?.valeur.toLowerCase().includes(qDeb) ||
           r.activite?.valeur.toLowerCase().includes(qDeb);
 
-        const s =
-          fStatut === "all" ||
-          r.statut === fStatut;
-
         const g = fGroupe === "all" || r.groupe?.valeur === fGroupe;
         const se = fSecteur === "all" || r.secteur?.valeur === fSecteur;
         const a = fActivite === "all" || r.activite?.valeur === fActivite;
         const v = fVille === "all" || r.ville === fVille;
 
-        return hit && s && g && se && a && v;
+        return hit && g && se && a && v;
       }),
     [rows, qDeb, fStatut, fGroupe, fSecteur, fActivite, fVille]
   );
-
+  
   function openSheet(id: string) {
     setSelectedId(id);
     setSheetOpen(true);
@@ -272,6 +300,21 @@ export default function Etablissements() {
 
     setQuickLoading(true);
 
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = selectedUserId === 'tous' ? sessionData.session?.user.id : selectedUserId;
+    
+    const isDuplicate = rows.some(r => 
+        r.nom.toLowerCase() === quickForm.nom.trim().toLowerCase() && 
+        r.ville?.toLowerCase() === quickForm.ville.trim().toLowerCase() &&
+        r.actif === true 
+    );
+
+    if (isDuplicate) {
+        toast.error("Un établissement portant ce nom et cette ville existe déjà dans votre portefeuille actif.");
+        setQuickLoading(false);
+        return;
+    }
+
     const { data: inserted, error } = await supabase
       .from("establishments")
       .insert({
@@ -283,7 +326,9 @@ export default function Etablissements() {
         activite_id:
           quickForm.activiteId === NONE_VALUE ? null : quickForm.activiteId,
         ville: quickForm.ville || null,
-      })
+        commercial_id: userId, 
+        actif: true, 
+      } as any) 
       .select("id")
       .single();
 
@@ -295,9 +340,6 @@ export default function Etablissements() {
 
     if (quickActionEnabled) {
       try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const userId = sessionData.session?.user.id;
-
         if (userId) {
           await supabase.from("actions").insert({
             etablissement_id: inserted.id,
@@ -310,7 +352,6 @@ export default function Etablissements() {
           });
         }
       } catch {
-        // on ne bloque pas la création pour un échec d'action
       }
     }
 
@@ -318,50 +359,108 @@ export default function Etablissements() {
     resetQuick();
     setQuickOpen(false);
     setQuickLoading(false);
-    fetchRows();
+    fetchRows(); 
   }
 
   function handleQuickCancel() {
     resetQuick();
     setQuickOpen(false);
   }
+  
+  const handleArchiveDelete = async (id: string, action: 'archive' | 'delete' | 'reactivate') => {
+    const row = (rows as Establishment[]).find(r => r.id === id);
+    if (!row) return;
+
+    if (action === 'delete') {
+      if (row.statut !== 'prospect') {
+        toast.error("Seuls les Prospects peuvent être supprimés définitivement. Les Clients doivent être Archivés.");
+        return;
+      }
+      
+      if (window.confirm(`Êtes-vous sûr de vouloir SUPPRIMER DÉFINITIVEMENT le prospect "${row.nom}" ? Cette action est irréversible.`)) {
+        const { error } = await supabase.from('establishments').delete().eq('id', id);
+        if (error) {
+          toast.error("Erreur lors de la suppression.");
+        } else {
+          toast.success("Prospect supprimé définitivement.");
+          fetchRows();
+        }
+      }
+      
+    } else if (action === 'archive') {
+        const newStatut = row.statut === 'client' ? 'ancien_client' : row.statut; 
+
+        const { error } = await supabase
+            .from('establishments')
+            .update({ actif: false, statut: newStatut } as any)
+            .eq('id', id);
+
+        if (error) {
+            toast.error("Erreur lors de l'archivage.");
+        } else {
+            toast.success("Établissement archivé (Inactif).");
+            fetchRows();
+        }
+    } else if (action === 'reactivate') {
+        if (row.actif) return;
+
+        const { error } = await supabase
+            .from('establishments')
+            .update({ actif: true } as any)
+            .eq('id', id);
+
+        if (error) {
+            toast.error("Erreur lors de la réactivation.");
+        } else {
+            toast.success("Établissement réactivé.");
+            fetchRows();
+        }
+    }
+    if (selectedId === id) setSheetOpen(false);
+  };
+
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50/30 p-6">
-      <div className="max-w-7xl mx-auto space-y-5">
-        {/* Header */}
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-white shadow-sm border border-gray-200">
-              <Target className="h-5 w-5 text-blue-600" />
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50/30 p-6 space-y-5">
+      
+        {/* NOUVEL EN-TÊTE UNIFORMISÉ */}
+        <div className="flex flex-col gap-2 mb-6">
+            <div className="flex items-center gap-3">
+                <div className="p-2 bg-[#840404]/10 rounded-lg">
+                    <Briefcase className="h-6 w-6 text-[#840404]" />
+                </div>
+                <div>
+                    <h1 className="text-2xl font-bold text-slate-900">
+                        Portefeuille Clients & Prospects
+                    </h1>
+                    <p className="text-slate-600">
+                        Gestion de la base d&apos;établissements
+                    </p>
+                </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">
-                Portefeuille Clients
-              </h1>
-              <p className="text-gray-600 text-sm">
-                Gestion des prospects et clients
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              className="gap-2 border-gray-300 bg-white hover:bg-gray-50 shadow-sm h-9"
-            >
-              <Download className="h-4 w-4" />
-              <span>Exporter</span>
-            </Button>
-            <Button
-              className="gap-2 bg-blue-600 hover:bg-blue-700 shadow-sm h-9"
-              onClick={openNewSheet}
-            >
-              <Plus className="h-4 w-4" />
-              <span>Nouvel établissement</span>
-            </Button>
-          </div>
         </div>
+        {/* FIN DU NOUVEL EN-TÊTE */}
+
+        {/* Boutons d'action et Stats */}
+        <div className="flex justify-between items-center mb-4">
+            <div className="flex items-center gap-2">
+                <Button
+                    className="gap-2 bg-blue-600 hover:bg-blue-700 shadow-sm h-9"
+                    onClick={openNewSheet}
+                >
+                    <Plus className="h-4 w-4" />
+                    <span>Nouvel établissement</span>
+                </Button>
+                <Button
+                    variant="outline"
+                    className="gap-2 border-gray-300 bg-white hover:bg-gray-50 shadow-sm h-9"
+                >
+                    <Download className="h-4 w-4" />
+                    <span>Exporter</span>
+                </Button>
+            </div>
+        </div>
+
 
         {/* Stats */}
         <StatsCards establishments={rows} />
@@ -416,6 +515,7 @@ export default function Etablissements() {
               </div>
 
               <div className="flex gap-2 w-full md:w-auto md:flex-1">
+                {/* FILTRES PAR STATUT ACTIF */}
                 <Button
                   type="button"
                   size="sm"
@@ -425,7 +525,7 @@ export default function Etablissements() {
                       ? "bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
                       : "bg-white border-gray-300 text-gray-700 hover:bg-gray-50"
                   }`}
-                  onClick={() => toggleStatut("prospect")}
+                  onClick={() => setFStatut("prospect")}
                 >
                   Prospects
                 </Button>
@@ -438,27 +538,27 @@ export default function Etablissements() {
                       ? "bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
                       : "bg-white border-gray-300 text-gray-700 hover:bg-gray-50"
                   }`}
-                  onClick={() => toggleStatut("client")}
+                  onClick={() => setFStatut("client")}
                 >
                   Clients
                 </Button>
                 <Button
                   type="button"
                   size="sm"
-                  variant={fStatut === "ancien_client" ? "default" : "outline"}
+                  variant={fStatut === "archived" ? "default" : "outline"}
                   className={`h-9 flex-1 px-3 text-xs ${
-                    fStatut === "ancien_client"
-                      ? "bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
+                    fStatut === "archived"
+                      ? "bg-red-600 hover:bg-red-700 text-white border-red-600"
                       : "bg-white border-gray-300 text-gray-700 hover:bg-gray-50"
                   }`}
-                  onClick={() => toggleStatut("ancien_client")}
+                  onClick={() => setFStatut("archived")}
                 >
-                  Anciens clients
+                  Archivés
                 </Button>
               </div>
             </div>
 
-            {/* Ligne 2 : autres filtres */}
+            {/* Ligne 2 : autres filtres (inchangée) */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
               {/* Groupe */}
               <div>
@@ -543,7 +643,7 @@ export default function Etablissements() {
           </CardContent>
         </Card>
 
-        {/* Bouton Ajout rapide */}
+        {/* Bouton Ajout rapide (inchangé) */}
         <div className="flex items-center justify-between">
           <Button
             variant="outline"
@@ -556,7 +656,7 @@ export default function Etablissements() {
           </Button>
         </div>
 
-        {/* Bloc création rapide - VERSION CORRIGÉE */}
+        {/* Bloc création rapide - CODE INCHANGÉ */}
         {quickOpen && (
           <Card className="border border-blue-200 bg-blue-50/30 shadow-sm">
             <CardContent className="p-4 space-y-4">
@@ -714,7 +814,7 @@ export default function Etablissements() {
                 </div>
               </div>
 
-              {/* Section action rapide - SANS ICÔNES */}
+              {/* Section action rapide - CODE INCHANGÉ */}
               <div className="bg-white rounded-lg border border-gray-200 p-3">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
@@ -845,7 +945,7 @@ export default function Etablissements() {
                     size="sm"
                     onClick={handleQuickSave}
                     disabled={quickLoading || !quickForm.nom.trim()}
-                    className="h-9 bg-blue-600 hover:bg-blue-700"
+                    className="h-9 flex-1 bg-blue-600 hover:bg-blue-700"
                   >
                     {quickLoading ? "Création..." : "Créer l'établissement"}
                   </Button>
@@ -855,7 +955,7 @@ export default function Etablissements() {
           </Card>
         )}
 
-        {/* Tableau avec header fixe - VERSION CORRIGÉE */}
+        {/* Tableau avec header fixe et actions Archivage/Suppression */}
         <Card className="border border-gray-200 shadow-sm overflow-hidden">
           <div className="overflow-auto">
             <div className="min-w-full">
@@ -904,7 +1004,7 @@ export default function Etablissements() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {loading ? (
+                  {loading || loadingUserView ? (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center py-8">
                         <div className="flex flex-col items-center justify-center">
@@ -959,6 +1059,7 @@ export default function Etablissements() {
                                 } transition-colors`}
                               >
                                 {r.nom}
+                                {!r.actif && <Badge variant="destructive" className="ml-2 text-[10px] h-4 px-2">Archivé</Badge>}
                               </div>
                             </div>
                           </TableCell>
@@ -1006,12 +1107,34 @@ export default function Etablissements() {
                                 <DropdownMenuItem onClick={() => openSheet(r.id)}>
                                   Voir détails
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => openSheet(r.id)}>
-                                  Modifier
-                                </DropdownMenuItem>
-                                <DropdownMenuItem className="text-red-600">
-                                  Archiver
-                                </DropdownMenuItem>
+                                
+                                <DropdownMenuSeparator />
+
+                                {r.actif ? (
+                                    <>
+                                        <DropdownMenuItem 
+                                            onClick={() => handleArchiveDelete(r.id, 'archive')}
+                                            className="text-orange-600"
+                                        >
+                                            Archiver
+                                        </DropdownMenuItem>
+                                        {r.statut === 'prospect' && (
+                                            <DropdownMenuItem 
+                                                onClick={() => handleArchiveDelete(r.id, 'delete')}
+                                                className="text-red-600"
+                                            >
+                                                Supprimer (Définitif)
+                                            </DropdownMenuItem>
+                                        )}
+                                    </>
+                                ) : (
+                                    <DropdownMenuItem 
+                                        onClick={() => handleArchiveDelete(r.id, 'reactivate')}
+                                        className="text-green-600"
+                                    >
+                                        Réactiver
+                                    </DropdownMenuItem>
+                                )}
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </TableCell>
@@ -1029,9 +1152,8 @@ export default function Etablissements() {
           establishmentId={selectedId}
           open={sheetOpen}
           onClose={() => setSheetOpen(false)}
-          onUpdate={fetchRows}
+          onUpdate={fetchRows} 
         />
-      </div>
     </div>
   );
 }
