@@ -40,7 +40,6 @@ interface Props {
 
 type QuickActionType = "phoning" | "mailing" | "visite" | "rdv";
 
-// Options de notation du potentiel
 interface PotentialOption {
   value: string;
   label: string;
@@ -92,51 +91,16 @@ export const EstablishmentSheet = ({
 
   const isCreateMode = !establishmentId || !model?.id;
 
-  // ESC pour fermer
-  useEffect(() => {
-    if (!open) return;
-    const h = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [open, onClose]);
+  // Chargement des parametrages seul (pour la création)
+  async function fetchParamsOnly() {
+    const { data: p } = await supabase
+      .from("parametrages")
+      .select("*")
+      .order("valeur", { ascending: true });
 
-  // Chargement global
-  useEffect(() => {
-    if (open) {
-      if (establishmentId) {
-        void fetchAll();
-      } else {
-        // Fiche vierge en mode création
-        setModel({
-          id: null,
-          nom: "",
-          statut: "prospect",
-          potential_rating: null, // non noté par défaut
-          groupe_id: null,
-          activite_id: null,
-          secteur_id: null,
-          adresse: "",
-          code_postal: "",
-          ville: "",
-          commentaire: "",
-          concurrent_id: null,
-          info_concurrent: "",
-          coefficient_concurrent: "",
-        });
-        setContacts([]);
-        setActions([]);
-        setParams([]);
-        setLoading(false);
-      }
-    } else {
-      setModel(null);
-      setContacts([]);
-      setActions([]);
-      setParams([]);
-    }
-  }, [open, establishmentId]);
+    setParams(p || []);
+    setLoading(false);
+  }
 
   async function fetchAll() {
     if (!establishmentId) return;
@@ -185,7 +149,7 @@ export const EstablishmentSheet = ({
       if (!enriched.info_concurrent && compHist && compHist.length > 0) {
         enriched.info_concurrent = compHist[0].commentaire;
       }
-      // potential_rating vient directement de la base (null / "Aucun" / "Faible" / "Moyen" / "Fort")
+      // potential_rating vient directement de la base
     }
 
     setModel(enriched);
@@ -194,6 +158,52 @@ export const EstablishmentSheet = ({
     setParams(p || []);
     setLoading(false);
   }
+
+  // ESC pour fermer
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [open, onClose]);
+
+  // Chargement global
+  useEffect(() => {
+    if (open) {
+      if (establishmentId) {
+        void fetchAll();
+      } else {
+        // Fiche vierge en mode création + chargement des parametrages
+        setModel({
+          id: null,
+          nom: "",
+          statut: "prospect",
+          potential_rating: null,
+          groupe_id: null,
+          activite_id: null,
+          secteur_id: null,
+          adresse: "",
+          code_postal: "",
+          ville: "",
+          commentaire: "",
+          concurrent_id: null,
+          info_concurrent: "",
+          coefficient_concurrent: "",
+        });
+        setContacts([]);
+        setActions([]);
+        setLoading(true);
+        void fetchParamsOnly();
+      }
+    } else {
+      setModel(null);
+      setContacts([]);
+      setActions([]);
+      setParams([]);
+    }
+  }, [open, establishmentId]);
 
   // Refresh uniquement contacts
   async function fetchContactsOnly() {
@@ -329,6 +339,7 @@ export const EstablishmentSheet = ({
       statut_action: "a_venir" as const,
       commentaire: null,
       user_id: user.id,
+      contact_vu: null,
     };
 
     const { data, error } = await supabase
@@ -338,7 +349,6 @@ export const EstablishmentSheet = ({
 
     if (!error && data && data.length > 0) {
       const inserted = data[0];
-      // On fixe l'ID pour ouvrir en édition dans la timeline
       setExternalEditActionId(inserted.id);
       await fetchActionsOnly();
     } else {
@@ -351,10 +361,14 @@ export const EstablishmentSheet = ({
     if (!model) return;
     if (!model.nom || model.nom.trim() === "") return;
 
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
     const payload: any = {
       nom: model.nom.trim(),
       statut: model.statut || "prospect",
-      potential_rating: model.potential_rating || null,
+      potential_rating: model.potential_rating ?? null,
       groupe_id: model.groupe_id || null,
       activite_id: model.activite_id || null,
       secteur_id: model.secteur_id || null,
@@ -364,6 +378,7 @@ export const EstablishmentSheet = ({
       commentaire: model.commentaire || null,
       concurrent_id: model.concurrent_id || null,
       info_concurrent: model.info_concurrent || null,
+      commercial_id: user?.id ?? null, // pour le reporting déclenchés
     };
 
     const { data, error } = await supabase
@@ -375,6 +390,8 @@ export const EstablishmentSheet = ({
     if (!error && data) {
       onUpdate();
       onClose();
+    } else if (error) {
+      console.error("Erreur création établissement", error);
     }
   };
 
@@ -558,7 +575,9 @@ export const EstablishmentSheet = ({
                       <Input
                         className="mt-1"
                         value={model.ville || ""}
-                        onChange={(e) => onChange({ ville: e.target.value })}
+                        onChange={(e) =>
+                          onChange({ ville: e.target.value })
+                        }
                       />
                     </div>
                     <div className="col-span-2">
@@ -678,9 +697,7 @@ export const EstablishmentSheet = ({
                     Notation du potentiel client
                   </label>
                   <Select
-                    value={
-                      model.potential_rating ?? "non_renseigne"
-                    }
+                    value={model.potential_rating ?? "non_renseigne"}
                     onValueChange={(v: string) =>
                       onChange({
                         potential_rating:
@@ -693,10 +710,7 @@ export const EstablishmentSheet = ({
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="non_renseigne">
-                        <div className="flex items-center gap-2">
-                          <XCircle className="h-4 w-4 text-slate-400" />
-                          <span>Non renseigné</span>
-                        </div>
+                        Non renseigné
                       </SelectItem>
                       {POTENTIAL_OPTIONS.map((option) => (
                         <SelectItem
@@ -734,3 +748,6 @@ export const EstablishmentSheet = ({
     </div>
   );
 };
+
+// Pour satisfaire à la fois les imports nommés et les imports par défaut
+export default EstablishmentSheet;
