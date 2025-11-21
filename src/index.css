@@ -128,4 +128,18 @@ All colors MUST be HSL.
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Toujours garder la scrollbar verticale pour éviter tout saut de mise en page */
+  html,
+  body {
+    overflow-y: scroll !important;
+    overflow-x: hidden;
+  }
+}
+
+/* Utilitaire pour stabiliser la scrollbar (au cas où) */
+@layer utilities {
+  .scroll-stable {
+    scrollbar-gutter: stable;
+  }
 }

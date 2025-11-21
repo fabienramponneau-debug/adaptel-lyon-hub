@@ -1,3 +1,4 @@
+// src/components/ActionForm.tsx - Version stable (avant les erreurs fatales)
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -12,7 +13,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectTrigger,
@@ -45,6 +45,7 @@ interface ActionFormProps {
   prefilledDate?: string;
   establishmentId?: string | null;
   onSuccess: () => void;
+  overrideCommercialId?: string | null;
 }
 
 export function ActionForm({
@@ -53,6 +54,7 @@ export function ActionForm({
   prefilledDate,
   establishmentId,
   onSuccess,
+  overrideCommercialId,
 }: ActionFormProps) {
   const { toast } = useToast();
 
@@ -68,8 +70,12 @@ export function ActionForm({
     prefilledDate || new Date().toISOString().slice(0, 10)
   );
   const [commentaire, setCommentaire] = useState("");
+  const [contactVu, setContactVu] = useState(""); // NOUVEL ÉTAT POUR LA PERSONNE VUE
 
-  // Création rapide établissement
+  // Définition de isCreateMode au début de la fonction pour éviter l'erreur TS2304
+  const isCreateMode = !establishmentId;
+
+  // Création rapide établissement (inchangé)
   const [creatingEstab, setCreatingEstab] = useState(false);
   const [newEstabNom, setNewEstabNom] = useState("");
   const [newEstabVille, setNewEstabVille] = useState("");
@@ -80,11 +86,11 @@ export function ActionForm({
   useEffect(() => {
     if (open) {
       void loadEstablishments();
-      // reset si ouverture
       setDate(prefilledDate || new Date().toISOString().slice(0, 10));
       setStatut("a_venir");
       setType("phoning");
       setCommentaire("");
+      setContactVu(""); 
       if (establishmentId) {
         setSelectedEstabId(establishmentId);
       } else {
@@ -115,13 +121,21 @@ export function ActionForm({
     }
 
     setLoading(true);
+    
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    
+    const commercialIdToUse = overrideCommercialId || user?.id || null;
+
     const { data, error } = await supabase
       .from("establishments")
       .insert({
         nom: newEstabNom.trim(),
         ville: newEstabVille.trim() || null,
         statut: newEstabStatut,
-      })
+        commercial_id: commercialIdToUse 
+      } as any) 
       .select("id, nom, ville")
       .single();
 
@@ -136,7 +150,6 @@ export function ActionForm({
       return;
     }
 
-    // On ajoute dans la liste et on sélectionne
     setEstablishments((prev) => [
       ...prev,
       { id: data.id, nom: data.nom, ville: data.ville },
@@ -170,6 +183,17 @@ export function ActionForm({
       });
       return;
     }
+    
+    // Vérification de la personne vue si c'est une visite ou un rdv
+    if ((type === 'visite' || type === 'rdv') && !contactVu.trim()) {
+        toast({
+            variant: "destructive",
+            title: "Personne vue obligatoire",
+            description: "Pour une Visite ou un RDV, la personne rencontrée est obligatoire.",
+        });
+        return;
+    }
+
 
     setLoading(true);
 
@@ -186,21 +210,18 @@ export function ActionForm({
       });
       return;
     }
+    
+    const userIdToUse = overrideCommercialId || user.id;
 
-    const payload: {
-      etablissement_id: string;
-      user_id: string;
-      type: ActionType;
-      date_action: string;
-      statut_action: ActionStatus;
-      commentaire: string | null;
-    } = {
+
+    const payload: any = { 
       etablissement_id: selectedEstabId,
-      user_id: user.id,
+      user_id: userIdToUse, 
       type,
       date_action: date,
       statut_action: statut,
       commentaire: commentaire.trim() || null,
+      contact_vu: contactVu.trim() || null, // Sauvegarde
     };
 
     const { error } = await supabase.from("actions").insert(payload);
@@ -248,189 +269,132 @@ export function ActionForm({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="sm:max-w-[600px] rounded-xl">
         <DialogHeader>
-          <DialogTitle>Nouvelle action</DialogTitle>
+          <DialogTitle>
+            {isCreateMode ? "Créer un nouvel établissement" : "Planifier une action"}
+          </DialogTitle>
           <DialogDescription>
-            Planifiez une action de prospection ou une relance.
+            {isCreateMode
+              ? "Créer une fiche client/prospect rapide."
+              : "Ajouter une nouvelle action de prospection ou de suivi."}
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-5">
-          {/* Établissement */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-sm font-medium">Établissement</Label>
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 text-xs text-[#840404] hover:underline"
-                onClick={() => setCreatingEstab((v) => !v)}
-              >
-                <Plus className="h-3 w-3" />
-                <span>Création rapide</span>
-              </button>
-            </div>
-
-            {!creatingEstab ? (
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {!isCreateMode && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">
+                Établissement
+              </label>
               <Select
                 value={selectedEstabId}
-                onValueChange={(v) => setSelectedEstabId(v)}
+                onValueChange={setSelectedEstabId}
+                disabled={!!establishmentId}
               >
-                <SelectTrigger>
+                <SelectTrigger className="h-10">
                   <SelectValue placeholder="Sélectionner un établissement" />
                 </SelectTrigger>
                 <SelectContent className="max-h-72">
-                  {establishments.map((e) => (
-                    <SelectItem key={e.id} value={e.id}>
-                      {e.nom}
-                      {e.ville ? ` – ${e.ville}` : ""}
+                  {establishments.map((estab) => (
+                    <SelectItem key={estab.id} value={estab.id}>
+                      {estab.nom} ({estab.ville || "Ville inconnue"})
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-            ) : (
-              <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-                <div className="flex items-center gap-2 text-xs text-slate-600 mb-1">
-                  <Building2 className="h-3 w-3" />
-                  <span>Création rapide d&apos;un établissement</span>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="col-span-2">
-                    <Label className="text-xs">Nom *</Label>
-                    <Input
-                      value={newEstabNom}
-                      onChange={(e) => setNewEstabNom(e.target.value)}
-                      placeholder="Nom de l'établissement"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Ville</Label>
-                    <Input
-                      value={newEstabVille}
-                      onChange={(e) => setNewEstabVille(e.target.value)}
-                      placeholder="Lyon..."
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Statut</Label>
-                    <Select
-                      value={newEstabStatut}
-                      onValueChange={(v: any) => setNewEstabStatut(v)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="prospect">Prospect</SelectItem>
-                        <SelectItem value="client">Client</SelectItem>
-                        <SelectItem value="ancien_client">
-                          Ancien client
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="flex justify-end gap-2 pt-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setCreatingEstab(false);
-                      setNewEstabNom("");
-                      setNewEstabVille("");
-                    }}
-                  >
-                    Annuler
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={handleCreateEstablishment}
-                    disabled={loading}
-                  >
-                    {loading ? "Création..." : "Créer et sélectionner"}
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
 
-          {/* Type d'action */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium">Type d&apos;action</Label>
-            <div className="grid grid-cols-2 gap-2">
+            <label className="text-sm font-medium text-slate-700">
+              Type d'action
+            </label>
+            <div className="flex flex-wrap gap-2">
               {renderTypeButton(
                 "phoning",
                 "Phoning",
-                <Phone className="h-3.5 w-3.5 text-slate-700" />
+                <Phone className="h-4 w-4 text-blue-600" />
               )}
               {renderTypeButton(
                 "mailing",
                 "Mailing",
-                <Mail className="h-3.5 w-3.5 text-slate-700" />
+                <Mail className="h-4 w-4 text-green-600" />
               )}
               {renderTypeButton(
                 "visite",
-                "Visite terrain",
-                <MapPin className="h-3.5 w-3.5 text-slate-700" />
+                "Visite",
+                <MapPin className="h-4 w-4 text-purple-600" />
               )}
               {renderTypeButton(
                 "rdv",
-                "Rendez-vous",
-                <CalendarIcon className="h-3.5 w-3.5 text-slate-700" />
+                "RDV",
+                <CalendarIcon className="h-4 w-4 text-orange-600" />
               )}
             </div>
           </div>
+          
+          {/* CHAMP: Personne vue (Visible uniquement pour Visite et RDV) */}
+          {(type === 'visite' || type === 'rdv') && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">
+                Personne rencontrée / vue
+              </label>
+              <Input
+                value={contactVu}
+                onChange={(e) => setContactVu(e.target.value)}
+                placeholder="Nom du contact (ex: M. Dupont / L'accueil)"
+              />
+            </div>
+          )}
+          {/* FIN CHAMP PERSONNE VUE */}
 
-          {/* Statut + Date */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label className="text-sm font-medium">Statut</Label>
-              <Select
-                value={statut}
-                onValueChange={(v: any) => setStatut(v as ActionStatus)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="a_venir">Planifié</SelectItem>
-                  <SelectItem value="a_relancer">À relancer</SelectItem>
-                  <SelectItem value="effectue">Effectué</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">Date</Label>
+              <label className="text-sm font-medium text-slate-700">
+                Date de l'action
+              </label>
               <Input
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
               />
             </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">
+                Statut
+              </label>
+              <Select
+                value={statut}
+                onValueChange={(v: any) => setStatut(v)}
+              >
+                <SelectTrigger className="h-10">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="a_venir">Planifié (À venir)</SelectItem>
+                  <SelectItem value="effectue">Effectué</SelectItem>
+                  <SelectItem value="a_relancer">À relancer</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
-          {/* Commentaire */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium">Commentaire</Label>
+            <label className="text-sm font-medium text-slate-700">
+              Commentaire
+            </label>
             <Textarea
               rows={3}
-              placeholder="Notes de prospection, compte rendu, éléments à relancer..."
               value={commentaire}
               onChange={(e) => setCommentaire(e.target.value)}
+              placeholder="Détails de l'action..."
             />
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
-              Annuler
-            </Button>
-            <Button type="submit" disabled={loading}>
+          <div className="flex justify-end pt-2">
+            <Button type="submit" disabled={loading} className="w-full">
               {loading ? "Enregistrement..." : "Enregistrer l'action"}
             </Button>
           </div>

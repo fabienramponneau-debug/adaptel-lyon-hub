@@ -21,6 +21,7 @@ interface Action {
   date_action: string;
   commentaire: string | null;
   statut_action: StatutAction;
+  contact_vu?: string | null; // personne vue
   user: {
     nom: string;
     prenom: string;
@@ -49,6 +50,7 @@ export const EstablishmentTimeline = ({
   const [editingStatus, setEditingStatus] =
     useState<StatutAction>("a_venir");
   const [editingDate, setEditingDate] = useState<string>("");
+  const [editingContactVu, setEditingContactVu] = useState<string>(""); // personne vue
   const [savingId, setSavingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -62,8 +64,8 @@ export const EstablishmentTimeline = ({
     setEditingComment(action.commentaire ?? "");
     setEditingStatus(action.statut_action ?? "a_venir");
     setEditingDate(action.date_action ?? "");
+    setEditingContactVu(action.contact_vu ?? "");
 
-    // On consomme l'ID externe une fois utilisé
     if (onResetExternalEdit) {
       onResetExternalEdit();
     }
@@ -81,11 +83,11 @@ export const EstablishmentTimeline = ({
       },
       visite: {
         icon: MapPin,
-        label: "Visite", // au lieu de "Visite terrain"
+        label: "Visite",
       },
       rdv: {
         icon: Calendar,
-        label: "Rdv", // au lieu de "Rendez-vous"
+        label: "Rdv",
       },
     } as const;
 
@@ -137,6 +139,7 @@ export const EstablishmentTimeline = ({
     setEditingComment(action.commentaire ?? "");
     setEditingStatus(action.statut_action ?? "a_venir");
     setEditingDate(action.date_action ?? "");
+    setEditingContactVu(action.contact_vu ?? "");
   };
 
   const cancelEdit = () => {
@@ -144,24 +147,37 @@ export const EstablishmentTimeline = ({
     setEditingComment("");
     setEditingStatus("a_venir");
     setEditingDate("");
+    setEditingContactVu("");
   };
 
   const handleUpdate = async (id: string) => {
     setSavingId(id);
+
+    const action = actions.find((a) => a.id === id);
+
+    const baseUpdate: any = {
+      commentaire:
+        editingComment.trim() === "" ? null : editingComment.trim(),
+      statut_action: editingStatus,
+      date_action: editingDate || null,
+    };
+
+    if (action && (action.type === "visite" || action.type === "rdv")) {
+      baseUpdate.contact_vu =
+        editingContactVu.trim() === ""
+          ? null
+          : editingContactVu.trim();
+    }
+
     await supabase
       .from("actions")
-      .update({
-        commentaire:
-          editingComment.trim() === "" ? null : editingComment.trim(),
-        statut_action: editingStatus,
-        date_action: editingDate || null,
-      } as any)
+      .update(baseUpdate)
       .eq("id", id)
       .eq("etablissement_id", establishmentId);
 
     setSavingId(null);
-    cancelEdit(); // on ferme les champs
-    await onChanged(); // refresh propre
+    cancelEdit();
+    await onChanged();
   };
 
   const handleDelete = async (id: string) => {
@@ -244,7 +260,7 @@ export const EstablishmentTimeline = ({
           </div>
         ) : (
           <div className="space-y-4">
-            {actions.map((action, index) => {
+            {actions.map((action) => {
               const { icon: IconComponent, label } = getActionConfig(
                 action.type
               );
@@ -252,6 +268,8 @@ export const EstablishmentTimeline = ({
               const dateLabel = formatDate(action.date_action);
               const prenom = action.user?.prenom ?? "";
               const isEditing = editingId === action.id;
+              const isVisiteOuRdv =
+                action.type === "visite" || action.type === "rdv";
 
               return (
                 <div key={action.id} className="flex gap-4 items-stretch">
@@ -326,9 +344,7 @@ export const EstablishmentTimeline = ({
                             type="date"
                             className="h-7 rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-800"
                             value={editingDate || ""}
-                            onChange={(e) =>
-                              setEditingDate(e.target.value)
-                            }
+                            onChange={(e) => setEditingDate(e.target.value)}
                           />
                         ) : (
                           <span className="font-medium capitalize">
@@ -370,6 +386,43 @@ export const EstablishmentTimeline = ({
                             </p>
                           </div>
                         )
+                      )}
+
+                      {/* Personne vue pour visite / rdv */}
+                      {isVisiteOuRdv && (
+                        <>
+                          {isEditing ? (
+                            <div className="flex gap-2 text-sm text-slate-700">
+                              <User className="h-4 w-4 mt-1 text-slate-400 flex-shrink-0" />
+                              <input
+                                type="search"
+                                name="contact_vu"
+                                autoComplete="off"
+                                autoCorrect="off"
+                                autoCapitalize="off"
+                                inputMode="text"
+                                // hints pour password managers
+                                data-lpignore="true"
+                                data-form-type="other"
+                                className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800"
+                                value={editingContactVu}
+                                onChange={(e) =>
+                                  setEditingContactVu(e.target.value)
+                                }
+                                placeholder="Personne vue (accueil, réception, nom du contact...)"
+                              />
+                            </div>
+                          ) : (
+                            action.contact_vu && (
+                              <div className="flex gap-2 text-sm text-slate-700">
+                                <User className="h-4 w-4 mt-0.5 text-slate-400 flex-shrink-0" />
+                                <p className="leading-relaxed">
+                                  Personne vue : {action.contact_vu}
+                                </p>
+                              </div>
+                            )
+                          )}
+                        </>
                       )}
 
                       {/* Actions de validation en mode édition */}

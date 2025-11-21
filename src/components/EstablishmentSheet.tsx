@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// src/components/EstablishmentSheet.tsx
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  ReactNode,
+} from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { EstablishmentHeader } from "./EstablishmentHeader";
 import EstablishmentContacts from "./EstablishmentContacts";
@@ -12,7 +20,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Building2, Target, TrendingUp } from "lucide-react";
+import {
+  Building2,
+  Target,
+  TrendingUp,
+  Handshake,
+  XCircle,
+  ArrowDownRight,
+  ArrowRight,
+  CheckCircle,
+} from "lucide-react";
 
 interface Props {
   establishmentId: string | null;
@@ -22,6 +39,41 @@ interface Props {
 }
 
 type QuickActionType = "phoning" | "mailing" | "visite" | "rdv";
+
+// Options de notation du potentiel
+interface PotentialOption {
+  value: string;
+  label: string;
+  icon: ReactNode;
+  colorClass: string;
+}
+
+const POTENTIAL_OPTIONS: PotentialOption[] = [
+  {
+    value: "Aucun",
+    label: "Aucun",
+    icon: <XCircle className="h-4 w-4 text-slate-500" />,
+    colorClass: "bg-slate-100 text-slate-700 border-slate-300",
+  },
+  {
+    value: "Faible",
+    label: "Faible",
+    icon: <ArrowDownRight className="h-4 w-4 text-yellow-600" />,
+    colorClass: "bg-yellow-100 text-yellow-800 border-yellow-300",
+  },
+  {
+    value: "Moyen",
+    label: "Moyen",
+    icon: <ArrowRight className="h-4 w-4 text-sky-600" />,
+    colorClass: "bg-sky-100 text-sky-800 border-sky-300",
+  },
+  {
+    value: "Fort",
+    label: "Fort",
+    icon: <CheckCircle className="h-4 w-4 text-green-600" />,
+    colorClass: "bg-green-100 text-green-800 border-green-300",
+  },
+];
 
 export const EstablishmentSheet = ({
   establishmentId,
@@ -61,6 +113,7 @@ export const EstablishmentSheet = ({
           id: null,
           nom: "",
           statut: "prospect",
+          potential_rating: null, // non noté par défaut
           groupe_id: null,
           activite_id: null,
           secteur_id: null,
@@ -93,10 +146,10 @@ export const EstablishmentSheet = ({
       supabase
         .from("establishments")
         .select(
-          `*, 
-           groupe:groupe_id(valeur), 
-           secteur:secteur_id(valeur), 
-           activite:activite_id(valeur), 
+          `*,
+           groupe:groupe_id(valeur),
+           secteur:secteur_id(valeur),
+           activite:activite_id(valeur),
            concurrent:concurrent_id(valeur)`
         )
         .eq("id", establishmentId)
@@ -128,12 +181,11 @@ export const EstablishmentSheet = ({
     let enriched: any = est || null;
     if (enriched) {
       enriched.coefficient_concurrent =
-        compHist && compHist.length > 0
-          ? compHist[0].coefficient
-          : null;
+        compHist && compHist.length > 0 ? compHist[0].coefficient : null;
       if (!enriched.info_concurrent && compHist && compHist.length > 0) {
         enriched.info_concurrent = compHist[0].commentaire;
       }
+      // potential_rating vient directement de la base (null / "Aucun" / "Faible" / "Moyen" / "Fort")
     }
 
     setModel(enriched);
@@ -194,9 +246,7 @@ export const EstablishmentSheet = ({
             coefficientForHistory = null;
           } else {
             const parsed = parseFloat(String(raw).replace(",", "."));
-            coefficientForHistory = Number.isNaN(parsed)
-              ? null
-              : parsed;
+            coefficientForHistory = Number.isNaN(parsed) ? null : parsed;
           }
           delete full.coefficient_concurrent;
         }
@@ -222,9 +272,7 @@ export const EstablishmentSheet = ({
             taux_horaire: null,
             date_info: dateStr,
             commentaire:
-              payload.info_concurrent ??
-              model.info_concurrent ??
-              null,
+              payload.info_concurrent ?? model.info_concurrent ?? null,
           } as any);
         }
 
@@ -306,6 +354,7 @@ export const EstablishmentSheet = ({
     const payload: any = {
       nom: model.nom.trim(),
       statut: model.statut || "prospect",
+      potential_rating: model.potential_rating || null,
       groupe_id: model.groupe_id || null,
       activite_id: model.activite_id || null,
       secteur_id: model.secteur_id || null,
@@ -329,11 +378,19 @@ export const EstablishmentSheet = ({
     }
   };
 
+  // Option courante de potentiel (badge)
+  const currentPotentialOption: PotentialOption | null = model?.potential_rating
+    ? POTENTIAL_OPTIONS.find((opt) => opt.value === model.potential_rating) ||
+      null
+    : null;
+
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end pointer-events-none">
+      {/* Overlay clicable derrière la fiche */}
       <div className="absolute inset-0" onClick={onClose} />
+      {/* Fiche client à droite */}
       <div className="relative w-full max-w-5xl bg-white shadow-xl h-full overflow-y-auto border-l border-slate-200 pointer-events-auto">
         <EstablishmentHeader
           establishment={model}
@@ -392,9 +449,7 @@ export const EstablishmentSheet = ({
                       <Input
                         className="mt-1"
                         value={model.nom || ""}
-                        onChange={(e) =>
-                          onChange({ nom: e.target.value })
-                        }
+                        onChange={(e) => onChange({ nom: e.target.value })}
                       />
                     </div>
                     <div>
@@ -503,9 +558,7 @@ export const EstablishmentSheet = ({
                       <Input
                         className="mt-1"
                         value={model.ville || ""}
-                        onChange={(e) =>
-                          onChange({ ville: e.target.value })
-                        }
+                        onChange={(e) => onChange({ ville: e.target.value })}
                       />
                     </div>
                     <div className="col-span-2">
@@ -600,8 +653,67 @@ export const EstablishmentSheet = ({
                 </div>
               </div>
 
-              {/* Colonne droite : timeline */}
+              {/* Colonne droite : potentiel + timeline */}
               <div className="space-y-6">
+                {/* Section Notation du potentiel */}
+                <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+                  <h3 className="font-semibold text-slate-900 mb-4 flex items-center justify-between text-[15px]">
+                    <span className="flex items-center gap-2">
+                      <Handshake className="h-5 w-5 text-[#840404]" />
+                      Potentiel &amp; suivi
+                    </span>
+                    {currentPotentialOption && (
+                      <div
+                        className={`px-2 py-1 border text-xs rounded-md flex items-center gap-1 ${currentPotentialOption.colorClass}`}
+                      >
+                        {currentPotentialOption.icon}
+                        <span className="font-medium">
+                          {currentPotentialOption.value}
+                        </span>
+                      </div>
+                    )}
+                  </h3>
+
+                  <label className="text-sm font-medium text-slate-700 mb-2 block">
+                    Notation du potentiel client
+                  </label>
+                  <Select
+                    value={
+                      model.potential_rating ?? "non_renseigne"
+                    }
+                    onValueChange={(v: string) =>
+                      onChange({
+                        potential_rating:
+                          v === "non_renseigne" ? null : v,
+                      })
+                    }
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Non renseigné" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="non_renseigne">
+                        <div className="flex items-center gap-2">
+                          <XCircle className="h-4 w-4 text-slate-400" />
+                          <span>Non renseigné</span>
+                        </div>
+                      </SelectItem>
+                      {POTENTIAL_OPTIONS.map((option) => (
+                        <SelectItem
+                          key={option.value}
+                          value={option.value}
+                        >
+                          <div className="flex items-center gap-2">
+                            {option.icon}
+                            <span>{option.label}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Timeline */}
                 {establishmentId && (
                   <EstablishmentTimeline
                     actions={actions}
