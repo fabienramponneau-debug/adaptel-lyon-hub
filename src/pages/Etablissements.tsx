@@ -169,7 +169,7 @@ export default function Etablissements() {
       )
       .order("nom", { ascending: true });
 
-    // Filtrage par commercial
+    // Filtrage par commercial (uniquement si tu gardes cette logique)
     if (!isGlobalView && selectedUserId && selectedUserId !== "tous") {
       query = query.eq("commercial_id", selectedUserId);
     }
@@ -374,38 +374,44 @@ export default function Etablissements() {
     setQuickOpen(false);
   }
 
-  const handleArchiveDelete = async (
+    const handleArchiveDelete = async (
     id: string,
     action: "archive" | "delete" | "reactivate"
   ) => {
-    const row = rows.find((r: Establishment) => r.id === id) as Establishment | undefined;
+    const row = rows.find((r: Establishment) => r.id === id) as
+      | Establishment
+      | undefined;
     if (!row) return;
 
+    // 👉 SUPPRESSION : popup interne (toast) avec bouton "Confirmer"
     if (action === "delete") {
-      if (row.statut !== "prospect") {
-        toast.error(
-          "Seuls les Prospects peuvent être supprimés définitivement. Les Clients doivent être Archivés."
-        );
-        return;
-      }
+      toast.warning(`Supprimer définitivement "${row.nom}" ?`, {
+        description: "Cette action est irréversible.",
+        action: {
+          label: "Confirmer",
+          onClick: async () => {
+            const { error } = await supabase
+              .from("establishments")
+              .delete()
+              .eq("id", id);
 
-      if (
-        window.confirm(
-          `Êtes-vous sûr de vouloir SUPPRIMER DÉFINITIVEMENT le prospect "${row.nom}" ? Cette action est irréversible.`
-        )
-      ) {
-        const { error } = await supabase
-          .from("establishments")
-          .delete()
-          .eq("id", id);
-        if (error) {
-          toast.error("Erreur lors de la suppression.");
-        } else {
-          toast.success("Prospect supprimé définitivement.");
-          fetchRows();
-        }
-      }
-    } else if (action === "archive") {
+            if (error) {
+              toast.error("Erreur lors de la suppression.");
+            } else {
+              toast.success("Établissement supprimé définitivement.");
+              await fetchRows();
+              if (selectedId === id) setSheetOpen(false);
+            }
+          },
+        },
+      });
+
+      // On sort ici : on attend le clic sur "Confirmer"
+      return;
+    }
+
+    // 🟠 ARCHIVER (inchangé)
+    if (action === "archive") {
       const newStatut =
         row.statut === "client" ? "ancien_client" : row.statut;
 
@@ -418,9 +424,12 @@ export default function Etablissements() {
         toast.error("Erreur lors de l'archivage.");
       } else {
         toast.success("Établissement archivé (Inactif).");
-        fetchRows();
+        await fetchRows();
       }
-    } else if (action === "reactivate") {
+    }
+
+    // 🟢 RÉACTIVER (inchangé)
+    if (action === "reactivate") {
       if (row.actif) return;
 
       const { error } = await supabase
@@ -432,9 +441,10 @@ export default function Etablissements() {
         toast.error("Erreur lors de la réactivation.");
       } else {
         toast.success("Établissement réactivé.");
-        fetchRows();
+        await fetchRows();
       }
     }
+
     if (selectedId === id) setSheetOpen(false);
   };
 
@@ -555,6 +565,19 @@ export default function Etablissements() {
                 onClick={() => setFStatut("client")}
               >
                 Clients
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={fStatut === "ancien_client" ? "default" : "outline"}
+                className={`h-9 flex-1 px-3 text-xs ${
+                  fStatut === "ancien_client"
+                    ? "bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
+                    : "bg-white border-gray-300 text-gray-700 hover:bg-gray-50"
+                }`}
+                onClick={() => setFStatut("ancien_client")}
+              >
+                Anciens clients
               </Button>
               <Button
                 type="button"
@@ -722,7 +745,9 @@ export default function Etablissements() {
                   </label>
                   <Select
                     value={quickForm.statut}
-                    onValueChange={(value: "prospect" | "client" | "ancien_client") =>
+                    onValueChange={(
+                      value: "prospect" | "client" | "ancien_client"
+                    ) =>
                       setQuickForm((prev) => ({ ...prev, statut: value }))
                     }
                   >
@@ -732,7 +757,9 @@ export default function Etablissements() {
                     <SelectContent>
                       <SelectItem value="prospect">Prospect</SelectItem>
                       <SelectItem value="client">Client</SelectItem>
-                      <SelectItem value="ancien_client">Ancien client</SelectItem>
+                      <SelectItem value="ancien_client">
+                        Ancien client
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1145,16 +1172,14 @@ export default function Etablissements() {
                                   >
                                     Archiver
                                   </DropdownMenuItem>
-                                  {r.statut === "prospect" && (
-                                    <DropdownMenuItem
-                                      onClick={() =>
-                                        handleArchiveDelete(r.id, "delete")
-                                      }
-                                      className="text-red-600"
-                                    >
-                                      Supprimer (Définitif)
-                                    </DropdownMenuItem>
-                                  )}
+                                  <DropdownMenuItem
+                                    onClick={() =>
+                                      handleArchiveDelete(r.id, "delete")
+                                    }
+                                    className="text-red-600"
+                                  >
+                                    Supprimer (définitif)
+                                  </DropdownMenuItem>
                                 </>
                               ) : (
                                 <DropdownMenuItem
