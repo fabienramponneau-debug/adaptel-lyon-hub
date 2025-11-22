@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, Pencil, Trash2, Check, X, Sliders } from "lucide-react";
 import { toast } from "sonner";
-import { format, subMonths } from "date-fns";
+import { format, addMonths } from "date-fns";
 
 interface Parametrage {
   id: string;
@@ -15,7 +15,6 @@ interface Parametrage {
 }
 
 type RoleType = "admin" | "commercial";
-
 type ActionType = "visite" | "rdv" | "phoning" | "mailing";
 
 interface UserOption {
@@ -30,12 +29,12 @@ const ACTION_LABELS: Record<ActionType, string> = {
   mailing: "Mailing",
 };
 
-// 12 mois glissants (MM/yyyy) avec code period_code = yyyy-MM
+// Mois : 12 passés, mois courant, 12 futurs (code period_code = yyyy-MM)
 const MONTH_OPTIONS = (() => {
   const now = new Date();
   const res: { value: string; label: string }[] = [];
-  for (let i = 11; i >= 0; i--) {
-    const d = subMonths(now, i);
+  for (let i = -12; i <= 12; i++) {
+    const d = addMonths(now, i);
     res.push({
       value: format(d, "yyyy-MM"),
       label: format(d, "MM/yyyy"),
@@ -75,6 +74,15 @@ const Parametrage = () => {
   });
   const [loadingObjectifs, setLoadingObjectifs] = useState(false);
   const [savingObjectifs, setSavingObjectifs] = useState(false);
+
+  // Vue d'ensemble des objectifs (tous users / tous mois)
+  const [allObjectifs, setAllObjectifs] = useState<
+    {
+      user_id: string;
+      period_code: string;
+      objectifs: Record<ActionType, number>;
+    }[]
+  >([]);
 
   useEffect(() => {
     fetchParametrages();
@@ -159,6 +167,9 @@ const Parametrage = () => {
       const current = options.find((o) => o.id === currentUserId);
       setSelectedUserId((current || options[0]).id);
     }
+
+    // On charge aussi la vue d'ensemble des objectifs
+    fetchAllObjectifs();
   };
 
   const fetchObjectifs = async (userId: string, month: string) => {
@@ -195,6 +206,50 @@ const Parametrage = () => {
     setLoadingObjectifs(false);
   };
 
+  const fetchAllObjectifs = async () => {
+    const { data, error } = await sbAny
+      .from("objectifs_actions")
+      .select("user_id, action_type, objectif, period_code")
+      .eq("period_type", "mois");
+
+    if (error) {
+      console.error("Erreur chargement tableau objectifs :", error.message);
+      return;
+    }
+
+    const map = new Map<
+      string,
+      {
+        user_id: string;
+        period_code: string;
+        objectifs: Record<ActionType, number>;
+      }
+    >();
+
+    (data || []).forEach((row: any) => {
+      const key = `${row.user_id}__${row.period_code}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          user_id: row.user_id,
+          period_code: row.period_code,
+          objectifs: {
+            visite: 0,
+            rdv: 0,
+            phoning: 0,
+            mailing: 0,
+          },
+        });
+      }
+      const entry = map.get(key)!;
+      const type = row.action_type as ActionType;
+      if (type in entry.objectifs) {
+        entry.objectifs[type] = row.objectif ?? 0;
+      }
+    });
+
+    setAllObjectifs(Array.from(map.values()));
+  };
+
   const handleSaveObjectifs = async () => {
     if (!selectedUserId || !selectedMonth) return;
 
@@ -208,7 +263,10 @@ const Parametrage = () => {
         .eq("period_code", selectedMonth);
 
       if (delError) {
-        console.error("Erreur suppression anciens objectifs :", delError.message);
+        console.error(
+          "Erreur suppression anciens objectifs :",
+          delError.message
+        );
         toast.error("Erreur lors de l'enregistrement des objectifs");
         setSavingObjectifs(false);
         return;
@@ -227,10 +285,15 @@ const Parametrage = () => {
         .insert(rows);
 
       if (insertError) {
-        console.error("Erreur insertion objectifs :", insertError.message);
+        console.error(
+          "Erreur insertion objectifs :",
+          insertError.message
+        );
         toast.error("Erreur lors de l'enregistrement des objectifs");
       } else {
         toast.success("Objectifs enregistrés");
+        // Refresh de la vue d'ensemble
+        await fetchAllObjectifs();
       }
     } finally {
       setSavingObjectifs(false);
@@ -397,23 +460,54 @@ const Parametrage = () => {
     );
   };
 
+  // Lignes pour le tableau de synthèse des objectifs
+  const objectifsTableRows =
+    allObjectifs.length === 0
+      ? []
+      : allObjectifs
+          .map((row) => {
+            const user = users.find((u) => u.id === row.user_id);
+            const userLabel = user?.label || "Utilisateur";
+            let monthLabel = row.period_code;
+            try {
+              const [yearStr, monthStr] = row.period_code.split("-");
+              const year = Number(yearStr);
+              const month = Number(monthStr);
+              if (!Number.isNaN(year) && !Number.isNaN(month)) {
+                const d = new Date(year, month - 1, 1);
+                monthLabel = format(d, "MM/yyyy");
+              }
+            } catch {
+              // on laisse le code brut si problème
+            }
+            return {
+              ...row,
+              userLabel,
+              monthLabel,
+            };
+          })
+          .sort((a, b) => {
+            if (a.userLabel < b.userLabel) return -1;
+            if (a.userLabel > b.userLabel) return 1;
+            return a.period_code.localeCompare(b.period_code);
+          });
+
   return (
     <div className="space-y-6">
-        
       {/* NOUVEL EN-TÊTE UNIFORMISÉ */}
       <div className="flex flex-col gap-2 mb-6">
         <div className="flex items-center gap-3">
-            <div className="p-2 bg-[#840404]/10 rounded-lg">
-                <Sliders className="h-6 w-6 text-[#840404]" />
-            </div>
-            <div>
-                <h1 className="text-2xl font-bold text-slate-900">
-                    Paramétrage & Objectifs
-                </h1>
-                <p className="text-slate-600">
-                    Configuration de l&apos;application
-                </p>
-            </div>
+          <div className="p-2 bg-[#840404]/10 rounded-lg">
+            <Sliders className="h-6 w-6 text-[#840404]" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">
+              Paramétrage & Objectifs
+            </h1>
+            <p className="text-slate-600">
+              Configuration de l&apos;application
+            </p>
+          </div>
         </div>
       </div>
       {/* FIN DU NOUVEL EN-TÊTE */}
@@ -522,6 +616,77 @@ const Parametrage = () => {
                         </span>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {/* Tableau de synthèse des objectifs existants */}
+                {objectifsTableRows.length > 0 && (
+                  <div className="mt-6 border rounded-md overflow-hidden">
+                    <div className="bg-muted px-3 py-2 text-xs font-medium text-muted-foreground">
+                      Vue d&apos;ensemble des objectifs enregistrés
+                    </div>
+                    <div className="overflow-auto">
+                      <table className="min-w-full text-xs">
+                        <thead>
+                          <tr className="border-b bg-muted/60">
+                            <th className="px-3 py-2 text-left font-medium">
+                              Commercial
+                            </th>
+                            <th className="px-3 py-2 text-left font-medium">
+                              Mois
+                            </th>
+                            <th className="px-3 py-2 text-right font-medium">
+                              Visites
+                            </th>
+                            <th className="px-3 py-2 text-right font-medium">
+                              Rdv
+                            </th>
+                            <th className="px-3 py-2 text-right font-medium">
+                              Phoning
+                            </th>
+                            <th className="px-3 py-2 text-right font-medium">
+                              Mailing
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {objectifsTableRows.map((row) => (
+                            <tr
+                              key={`${row.user_id}-${row.period_code}`}
+                              className={`border-b cursor-pointer hover:bg-muted/60 ${
+                                selectedUserId === row.user_id &&
+                                selectedMonth === row.period_code
+                                  ? "bg-muted"
+                                  : "bg-background"
+                              }`}
+                              onClick={() => {
+                                setSelectedUserId(row.user_id);
+                                setSelectedMonth(row.period_code);
+                              }}
+                            >
+                              <td className="px-3 py-2 whitespace-nowrap">
+                                {row.userLabel}
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap">
+                                {row.monthLabel}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {row.objectifs.visite}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {row.objectifs.rdv}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {row.objectifs.phoning}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {row.objectifs.mailing}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </CardContent>

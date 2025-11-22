@@ -1,4 +1,4 @@
-// src/components/ActionForm.tsx - Version stable (avant les erreurs fatales)
+// src/components/ActionForm.tsx
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -43,6 +43,10 @@ interface ActionFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   prefilledDate?: string;
+  /** 
+   * - null / undefined = ouverture depuis Prospection (l'user choisit l'établissement)
+   * - id défini = ouverture depuis la fiche établissement (select verrouillé)
+   */
   establishmentId?: string | null;
   onSuccess: () => void;
   overrideCommercialId?: string | null;
@@ -70,12 +74,12 @@ export function ActionForm({
     prefilledDate || new Date().toISOString().slice(0, 10)
   );
   const [commentaire, setCommentaire] = useState("");
-  const [contactVu, setContactVu] = useState(""); // NOUVEL ÉTAT POUR LA PERSONNE VUE
+  const [contactVu, setContactVu] = useState("");
 
-  // Définition de isCreateMode au début de la fonction pour éviter l'erreur TS2304
-  const isCreateMode = !establishmentId;
+  // Vrai si on vient de la fiche établissement (et donc établissement imposé)
+  const isFromEstablishmentSheet = Boolean(establishmentId);
 
-  // Création rapide établissement (inchangé)
+  // Création rapide établissement
   const [creatingEstab, setCreatingEstab] = useState(false);
   const [newEstabNom, setNewEstabNom] = useState("");
   const [newEstabVille, setNewEstabVille] = useState("");
@@ -90,7 +94,12 @@ export function ActionForm({
       setStatut("a_venir");
       setType("phoning");
       setCommentaire("");
-      setContactVu(""); 
+      setContactVu("");
+      setCreatingEstab(false);
+      setNewEstabNom("");
+      setNewEstabVille("");
+      setNewEstabStatut("prospect");
+
       if (establishmentId) {
         setSelectedEstabId(establishmentId);
       } else {
@@ -121,11 +130,11 @@ export function ActionForm({
     }
 
     setLoading(true);
-    
+
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    
+
     const commercialIdToUse = overrideCommercialId || user?.id || null;
 
     const { data, error } = await supabase
@@ -134,8 +143,8 @@ export function ActionForm({
         nom: newEstabNom.trim(),
         ville: newEstabVille.trim() || null,
         statut: newEstabStatut,
-        commercial_id: commercialIdToUse 
-      } as any) 
+        commercial_id: commercialIdToUse,
+      } as any)
       .select("id, nom, ville")
       .single();
 
@@ -167,6 +176,7 @@ export function ActionForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
     if (!selectedEstabId) {
       toast({
         variant: "destructive",
@@ -175,6 +185,7 @@ export function ActionForm({
       });
       return;
     }
+
     if (!date) {
       toast({
         variant: "destructive",
@@ -183,17 +194,16 @@ export function ActionForm({
       });
       return;
     }
-    
-    // Vérification de la personne vue si c'est une visite ou un rdv
-    if ((type === 'visite' || type === 'rdv') && !contactVu.trim()) {
-        toast({
-            variant: "destructive",
-            title: "Personne vue obligatoire",
-            description: "Pour une Visite ou un RDV, la personne rencontrée est obligatoire.",
-        });
-        return;
-    }
 
+    if ((type === "visite" || type === "rdv") && !contactVu.trim()) {
+      toast({
+        variant: "destructive",
+        title: "Personne vue obligatoire",
+        description:
+          "Pour une Visite ou un RDV, la personne rencontrée est obligatoire.",
+      });
+      return;
+    }
 
     setLoading(true);
 
@@ -210,18 +220,17 @@ export function ActionForm({
       });
       return;
     }
-    
+
     const userIdToUse = overrideCommercialId || user.id;
 
-
-    const payload: any = { 
+    const payload: any = {
       etablissement_id: selectedEstabId,
-      user_id: userIdToUse, 
+      user_id: userIdToUse,
       type,
       date_action: date,
       statut_action: statut,
       commentaire: commentaire.trim() || null,
-      contact_vu: contactVu.trim() || null, // Sauvegarde
+      contact_vu: contactVu.trim() || null,
     };
 
     const { error } = await supabase.from("actions").insert(payload);
@@ -269,46 +278,124 @@ export function ActionForm({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] rounded-xl">
+      <DialogContent className="sm:max-w-[650px] rounded-xl">
         <DialogHeader>
-          <DialogTitle>
-            {isCreateMode ? "Créer un nouvel établissement" : "Planifier une action"}
-          </DialogTitle>
+          <DialogTitle>Planifier une action</DialogTitle>
           <DialogDescription>
-            {isCreateMode
-              ? "Créer une fiche client/prospect rapide."
-              : "Ajouter une nouvelle action de prospection ou de suivi."}
+            Ajouter une nouvelle action de prospection ou de suivi.
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {!isCreateMode && (
-            <div className="space-y-2">
+          {/* ÉTABLISSEMENT + CREATION RAPIDE */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
               <label className="text-sm font-medium text-slate-700">
                 Établissement
               </label>
-              <Select
-                value={selectedEstabId}
-                onValueChange={setSelectedEstabId}
-                disabled={!!establishmentId}
-              >
-                <SelectTrigger className="h-10">
-                  <SelectValue placeholder="Sélectionner un établissement" />
-                </SelectTrigger>
-                <SelectContent className="max-h-72">
-                  {establishments.map((estab) => (
-                    <SelectItem key={estab.id} value={estab.id}>
-                      {estab.nom} ({estab.ville || "Ville inconnue"})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
 
+              {!isFromEstablishmentSheet && (
+                <Button
+                  type="button"
+                  variant={creatingEstab ? "default" : "outline"}
+                  size="sm"
+                  className="h-8 gap-1 text-xs"
+                  onClick={() => setCreatingEstab((prev) => !prev)}
+                >
+                  <Plus className="h-3 w-3" />
+                  <span>
+                    {creatingEstab ? "Annuler la création" : "Création rapide"}
+                  </span>
+                </Button>
+              )}
+            </div>
+
+            {/* Select établissement */}
+            <Select
+              value={selectedEstabId}
+              onValueChange={setSelectedEstabId}
+              disabled={isFromEstablishmentSheet}
+            >
+              <SelectTrigger className="h-10">
+                <SelectValue placeholder="Sélectionner un établissement" />
+              </SelectTrigger>
+              <SelectContent className="max-h-72">
+                {establishments.map((estab) => (
+                  <SelectItem key={estab.id} value={estab.id}>
+                    {estab.nom} ({estab.ville || "Ville inconnue"})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Création rapide d’établissement (nom + ville + statut) */}
+            {!isFromEstablishmentSheet && creatingEstab && (
+              <div className="mt-3 space-y-2 rounded-lg border border-dashed border-slate-300 bg-slate-50/60 p-3">
+                <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                  <Building2 className="h-3.5 w-3.5" />
+                  Création rapide d&apos;un établissement
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2">
+                  <Input
+                    value={newEstabNom}
+                    onChange={(e) => setNewEstabNom(e.target.value)}
+                    placeholder="Nom établissement *"
+                    className="h-9 text-sm"
+                  />
+                  <Input
+                    value={newEstabVille}
+                    onChange={(e) => setNewEstabVille(e.target.value)}
+                    placeholder="Ville"
+                    className="h-9 text-sm"
+                  />
+                  <Select
+                    value={newEstabStatut}
+                    onValueChange={(v: any) => setNewEstabStatut(v)}
+                  >
+                    <SelectTrigger className="h-9 text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="prospect">Prospect</SelectItem>
+                      <SelectItem value="client">Client</SelectItem>
+                      <SelectItem value="ancien_client">
+                        Ancien client
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex justify-end gap-2 pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => {
+                      setCreatingEstab(false);
+                      setNewEstabNom("");
+                      setNewEstabVille("");
+                    }}
+                  >
+                    Annuler
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-8"
+                    onClick={handleCreateEstablishment}
+                    disabled={loading || !newEstabNom.trim()}
+                  >
+                    {loading ? "Création..." : "Créer l'établissement"}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* TYPE D'ACTION */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700">
-              Type d'action
+              Type d&apos;action
             </label>
             <div className="flex flex-wrap gap-2">
               {renderTypeButton(
@@ -333,9 +420,9 @@ export function ActionForm({
               )}
             </div>
           </div>
-          
-          {/* CHAMP: Personne vue (Visible uniquement pour Visite et RDV) */}
-          {(type === 'visite' || type === 'rdv') && (
+
+          {/* PERSONNE VUE (visite / rdv) */}
+          {(type === "visite" || type === "rdv") && (
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700">
                 Personne rencontrée / vue
@@ -344,15 +431,16 @@ export function ActionForm({
                 value={contactVu}
                 onChange={(e) => setContactVu(e.target.value)}
                 placeholder="Nom du contact (ex: M. Dupont / L'accueil)"
+                autoComplete="off"
               />
             </div>
           )}
-          {/* FIN CHAMP PERSONNE VUE */}
 
+          {/* DATE + STATUT */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700">
-                Date de l'action
+                Date de l&apos;action
               </label>
               <Input
                 type="date"
@@ -365,10 +453,7 @@ export function ActionForm({
               <label className="text-sm font-medium text-slate-700">
                 Statut
               </label>
-              <Select
-                value={statut}
-                onValueChange={(v: any) => setStatut(v)}
-              >
+              <Select value={statut} onValueChange={(v: any) => setStatut(v)}>
                 <SelectTrigger className="h-10">
                   <SelectValue />
                 </SelectTrigger>
@@ -381,6 +466,7 @@ export function ActionForm({
             </div>
           </div>
 
+          {/* COMMENTAIRE */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700">
               Commentaire
@@ -393,6 +479,7 @@ export function ActionForm({
             />
           </div>
 
+          {/* CTA */}
           <div className="flex justify-end pt-2">
             <Button type="submit" disabled={loading} className="w-full">
               {loading ? "Enregistrement..." : "Enregistrer l'action"}
