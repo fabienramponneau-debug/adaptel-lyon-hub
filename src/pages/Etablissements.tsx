@@ -48,6 +48,10 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import { useUserView } from "@/contexts/UserViewContext";
+import {
+  searchCitySuggestions,
+  CitySuggestion,
+} from "@/utils/geoApi";
 
 interface ParamValue {
   valeur: string;
@@ -57,6 +61,7 @@ interface Establishment {
   id: string;
   nom: string;
   ville: string | null;
+  code_postal: string | null;
   statut: "prospect" | "client" | "ancien_client";
   actif: boolean;
   groupe: ParamValue | null;
@@ -72,7 +77,12 @@ interface Parametrage {
 
 const NONE_VALUE = "none";
 
-type StatutFilter = "all" | "prospect" | "client" | "ancien_client" | "archived";
+type StatutFilter =
+  | "all"
+  | "prospect"
+  | "client"
+  | "ancien_client"
+  | "archived";
 type ActionType = "phoning" | "mailing" | "visite" | "rdv";
 type ActionStatut = "a_venir" | "effectue";
 
@@ -80,7 +90,6 @@ export default function Etablissements() {
   const { selectedUserId, loadingUserView } = useUserView() as any;
   const isGlobalView = selectedUserId === "tous";
 
-  // On simplifie : rows = any[] pour éviter les galères de typage
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -115,6 +124,7 @@ export default function Etablissements() {
     secteurId: string;
     activiteId: string;
     ville: string;
+    code_postal: string;
   }>({
     nom: "",
     statut: "prospect",
@@ -122,7 +132,13 @@ export default function Etablissements() {
     secteurId: NONE_VALUE,
     activiteId: NONE_VALUE,
     ville: "",
+    code_postal: "",
   });
+
+  // Suggestions ville / CP pour la création rapide
+  const [citySuggestions, setCitySuggestions] = useState<CitySuggestion[]>([]);
+  const [cityLoading, setCityLoading] = useState(false);
+  const cityTimeoutRef = useRef<number | null>(null);
 
   const [quickActionEnabled, setQuickActionEnabled] = useState(false);
   const [quickAction, setQuickAction] = useState<{
@@ -135,7 +151,7 @@ export default function Etablissements() {
     date: new Date().toISOString().split("T")[0],
   });
 
-  // debounce recherche
+  // debounce recherche globale portefeuille
   const tRef = useRef<number | null>(null);
   useEffect(() => {
     if (tRef.current) clearTimeout(tRef.current);
@@ -161,7 +177,7 @@ export default function Etablissements() {
       .from("establishments")
       .select(
         `
-        id, nom, ville, statut, actif,
+        id, nom, ville, code_postal, statut, actif,
         groupe:groupe_id(valeur),
         secteur:secteur_id(valeur),
         activite:activite_id(valeur)
@@ -169,7 +185,7 @@ export default function Etablissements() {
       )
       .order("nom", { ascending: true });
 
-    // Filtrage par commercial (uniquement si tu gardes cette logique)
+    // Filtrage par commercial (si tu gardes cette logique)
     if (!isGlobalView && selectedUserId && selectedUserId !== "tous") {
       query = query.eq("commercial_id", selectedUserId);
     }
@@ -208,7 +224,7 @@ export default function Etablissements() {
     }
   }
 
-  // --- DÉRIVÉS SANS useMemo (pour éviter TS2589) ---
+  // --- DÉRIVÉS ---
 
   const uniq = (() => {
     const activeRows = rows.filter((r: any) => r.actif);
@@ -283,6 +299,7 @@ export default function Etablissements() {
       secteurId: NONE_VALUE,
       activiteId: NONE_VALUE,
       ville: "",
+      code_postal: "",
     });
     setQuickActionEnabled(false);
     setQuickAction({
@@ -290,7 +307,42 @@ export default function Etablissements() {
       statut: "a_venir",
       date: new Date().toISOString().split("T")[0],
     });
+    setCitySuggestions([]);
   }
+
+  // Recherche ville/CP (création rapide)
+  const handleCityInputChange = (value: string) => {
+    setQuickForm((prev) => ({
+      ...prev,
+      ville: value,
+      code_postal: "",
+    }));
+
+    if (cityTimeoutRef.current) {
+      window.clearTimeout(cityTimeoutRef.current);
+    }
+
+    if (!value || value.trim().length < 2) {
+      setCitySuggestions([]);
+      return;
+    }
+
+    cityTimeoutRef.current = window.setTimeout(async () => {
+      setCityLoading(true);
+      const res = await searchCitySuggestions(value);
+      setCitySuggestions(res);
+      setCityLoading(false);
+    }, 250);
+  };
+
+  const handleSelectCitySuggestion = (s: CitySuggestion) => {
+    setQuickForm((prev) => ({
+      ...prev,
+      ville: s.nom,
+      code_postal: s.code_postal,
+    }));
+    setCitySuggestions([]);
+  };
 
   async function handleQuickSave() {
     if (!quickForm.nom.trim()) {
@@ -309,7 +361,8 @@ export default function Etablissements() {
     const isDuplicate = rows.some(
       (r: any) =>
         r.nom.toLowerCase() === quickForm.nom.trim().toLowerCase() &&
-        r.ville?.toLowerCase() === quickForm.ville.trim().toLowerCase() &&
+        (r.ville || "").toLowerCase() ===
+          quickForm.ville.trim().toLowerCase() &&
         r.actif === true
     );
 
@@ -326,12 +379,14 @@ export default function Etablissements() {
       .insert({
         nom: quickForm.nom.trim(),
         statut: quickForm.statut,
-        groupe_id: quickForm.groupeId === NONE_VALUE ? null : quickForm.groupeId,
+        groupe_id:
+          quickForm.groupeId === NONE_VALUE ? null : quickForm.groupeId,
         secteur_id:
           quickForm.secteurId === NONE_VALUE ? null : quickForm.secteurId,
         activite_id:
           quickForm.activiteId === NONE_VALUE ? null : quickForm.activiteId,
         ville: quickForm.ville || null,
+        code_postal: quickForm.code_postal || null,
         commercial_id: userId,
         actif: true,
       } as any)
@@ -374,7 +429,7 @@ export default function Etablissements() {
     setQuickOpen(false);
   }
 
-    const handleArchiveDelete = async (
+  const handleArchiveDelete = async (
     id: string,
     action: "archive" | "delete" | "reactivate"
   ) => {
@@ -383,7 +438,6 @@ export default function Etablissements() {
       | undefined;
     if (!row) return;
 
-    // 👉 SUPPRESSION : popup interne (toast) avec bouton "Confirmer"
     if (action === "delete") {
       toast.warning(`Supprimer définitivement "${row.nom}" ?`, {
         description: "Cette action est irréversible.",
@@ -405,12 +459,9 @@ export default function Etablissements() {
           },
         },
       });
-
-      // On sort ici : on attend le clic sur "Confirmer"
       return;
     }
 
-    // 🟠 ARCHIVER (inchangé)
     if (action === "archive") {
       const newStatut =
         row.statut === "client" ? "ancien_client" : row.statut;
@@ -428,7 +479,6 @@ export default function Etablissements() {
       }
     }
 
-    // 🟢 RÉACTIVER (inchangé)
     if (action === "reactivate") {
       if (row.actif) return;
 
@@ -839,22 +889,46 @@ export default function Etablissements() {
                   </Select>
                 </div>
 
-                {/* Ville */}
-                <div>
+                {/* Ville / CP (recherche) */}
+                <div className="md:col-span-1">
                   <label className="text-xs font-medium text-gray-700 mb-1 block">
-                    Ville
+                    Ville / Code postal
                   </label>
                   <Input
                     value={quickForm.ville}
-                    onChange={(e) =>
-                      setQuickForm((prev) => ({
-                        ...prev,
-                        ville: e.target.value,
-                      }))
-                    }
-                    placeholder="Ville"
+                    onChange={(e) => handleCityInputChange(e.target.value)}
+                    placeholder="Ville ou code postal"
                     className="h-9 text-sm"
                   />
+                  {/* Suggestions */}
+                  {cityLoading && (
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      Recherche...
+                    </p>
+                  )}
+                  {!cityLoading && citySuggestions.length > 0 && (
+                    <div className="mt-1 max-h-40 overflow-y-auto rounded-md border border-gray-200 bg-white shadow-sm text-xs">
+                      {citySuggestions.map((s) => (
+                        <button
+                          key={`${s.nom}-${s.code_postal}`}
+                          type="button"
+                          onClick={() => handleSelectCitySuggestion(s)}
+                          className="w-full px-2 py-1 text-left hover:bg-blue-50 flex justify-between"
+                        >
+                          <span>{s.nom}</span>
+                          <span className="text-gray-500">{s.code_postal}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {quickForm.code_postal && (
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      Code postal sélectionné :{" "}
+                      <span className="font-semibold">
+                        {quickForm.code_postal}
+                      </span>
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -1133,6 +1207,9 @@ export default function Etablissements() {
                         <TableCell className="py-3">
                           <span className="text-sm text-gray-700 font-medium">
                             {r.ville || "-"}
+                            {r.code_postal
+                              ? ` (${r.code_postal})`
+                              : ""}
                           </span>
                         </TableCell>
                         <TableCell className="py-3">

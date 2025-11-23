@@ -30,6 +30,10 @@ import {
   ArrowRight,
   CheckCircle,
 } from "lucide-react";
+import {
+  searchCitySuggestions,
+  CitySuggestion,
+} from "@/utils/geoApi";
 
 interface Props {
   establishmentId: string | null;
@@ -90,6 +94,11 @@ export const EstablishmentSheet = ({
     useState<string | null>(null);
 
   const isCreateMode = !establishmentId || !model?.id;
+
+  // Suggestions ville / CP
+  const [citySuggestions, setCitySuggestions] = useState<CitySuggestion[]>([]);
+  const [cityLoading, setCityLoading] = useState(false);
+  const cityTimeoutRef = useRef<number | null>(null);
 
   // Chargement des parametrages seul (pour la création)
   async function fetchParamsOnly() {
@@ -202,6 +211,7 @@ export const EstablishmentSheet = ({
       setContacts([]);
       setActions([]);
       setParams([]);
+      setCitySuggestions([]);
     }
   }, [open, establishmentId]);
 
@@ -378,7 +388,7 @@ export const EstablishmentSheet = ({
       commentaire: model.commentaire || null,
       concurrent_id: model.concurrent_id || null,
       info_concurrent: model.info_concurrent || null,
-      commercial_id: user?.id ?? null, // pour le reporting déclenchés
+      commercial_id: user?.id ?? null,
     };
 
     const { data, error } = await supabase
@@ -393,6 +403,45 @@ export const EstablishmentSheet = ({
     } else if (error) {
       console.error("Erreur création établissement", error);
     }
+  };
+
+  // Gestion ville / code postal : saisie dans un sens ou l'autre
+  const handleCityFieldChange = async (
+    field: "ville" | "code_postal",
+    value: string
+  ) => {
+    // On met à jour le modèle immédiatement
+    if (field === "ville") {
+      onChange({ ville: value });
+    } else {
+      onChange({ code_postal: value });
+    }
+
+    // Reset si trop court
+    const trimmed = value.trim();
+    if (cityTimeoutRef.current) {
+      window.clearTimeout(cityTimeoutRef.current);
+    }
+    if (trimmed.length < 2) {
+      setCitySuggestions([]);
+      return;
+    }
+
+    // Debounce appel API
+    cityTimeoutRef.current = window.setTimeout(async () => {
+      setCityLoading(true);
+      const res = await searchCitySuggestions(trimmed);
+      setCitySuggestions(res);
+      setCityLoading(false);
+    }, 250);
+  };
+
+  const handleSelectCitySuggestion = (s: CitySuggestion) => {
+    onChange({
+      ville: s.nom,
+      code_postal: s.code_postal,
+    });
+    setCitySuggestions([]);
   };
 
   // Option courante de potentiel (badge)
@@ -564,8 +613,9 @@ export const EstablishmentSheet = ({
                         className="mt-1"
                         value={model.code_postal || ""}
                         onChange={(e) =>
-                          onChange({ code_postal: e.target.value })
+                          handleCityFieldChange("code_postal", e.target.value)
                         }
+                        placeholder="Ex : 69003"
                       />
                     </div>
                     <div>
@@ -576,9 +626,41 @@ export const EstablishmentSheet = ({
                         className="mt-1"
                         value={model.ville || ""}
                         onChange={(e) =>
-                          onChange({ ville: e.target.value })
+                          handleCityFieldChange("ville", e.target.value)
                         }
+                        placeholder="Ex : Lyon"
                       />
+                      {/* Suggestions ville / CP sous le champ ville */}
+                      {cityLoading && (
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          Recherche des communes...
+                        </p>
+                      )}
+                      {!cityLoading && citySuggestions.length > 0 && (
+                        <div className="mt-1 max-h-40 overflow-y-auto rounded-md border border-slate-200 bg-white shadow-sm text-xs">
+                          {citySuggestions.map((s) => (
+                            <button
+                              key={`${s.nom}-${s.code_postal}`}
+                              type="button"
+                              onClick={() => handleSelectCitySuggestion(s)}
+                              className="w-full px-2 py-1 text-left hover:bg-blue-50 flex justify-between"
+                            >
+                              <span>{s.nom}</span>
+                              <span className="text-slate-500">
+                                {s.code_postal}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {model.code_postal && (
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          Code postal sélectionné :{" "}
+                          <span className="font-semibold">
+                            {model.code_postal}
+                          </span>
+                        </p>
+                      )}
                     </div>
                     <div className="col-span-2">
                       <label className="text-sm font-medium text-slate-700">
