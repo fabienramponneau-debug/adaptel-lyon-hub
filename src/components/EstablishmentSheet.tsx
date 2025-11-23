@@ -2,7 +2,6 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   ReactNode,
@@ -78,6 +77,16 @@ const POTENTIAL_OPTIONS: PotentialOption[] = [
   },
 ];
 
+// Normalisation pour comparer les noms / villes (doublons)
+const normalizeText = (str: string | null | undefined) =>
+  (str || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
 export const EstablishmentSheet = ({
   establishmentId,
   open,
@@ -100,6 +109,14 @@ export const EstablishmentSheet = ({
   const [cityLoading, setCityLoading] = useState(false);
   const cityTimeoutRef = useRef<number | null>(null);
 
+  // Données pour gestion des doublons
+  const [allEstablishments, setAllEstablishments] = useState<
+    { id: string; nom: string; ville: string | null }[]
+  >([]);
+  const [duplicateMatches, setDuplicateMatches] = useState<
+    { id: string; nom: string; ville: string | null }[]
+  >([]);
+
   // Chargement des parametrages seul (pour la création)
   async function fetchParamsOnly() {
     const { data: p } = await supabase
@@ -109,6 +126,31 @@ export const EstablishmentSheet = ({
 
     setParams(p || []);
     setLoading(false);
+  }
+
+  // Chargement de la liste complète (pour doublons) – all établissements
+  async function fetchAllEstablishmentsForDuplicates(
+    currentId?: string | null
+  ) {
+    const { data } = await supabase
+      .from("establishments")
+      .select("id, nom, ville");
+
+    if (data) {
+      const asAny = data as any[];
+      const filtered = currentId
+        ? asAny.filter((e) => e.id !== currentId)
+        : asAny;
+      setAllEstablishments(
+        filtered.map((e) => ({
+          id: e.id as string,
+          nom: (e.nom as string) || "",
+          ville: (e.ville as string | null) ?? null,
+        }))
+      );
+    } else {
+      setAllEstablishments([]);
+    }
   }
 
   async function fetchAll() {
@@ -158,7 +200,6 @@ export const EstablishmentSheet = ({
       if (!enriched.info_concurrent && compHist && compHist.length > 0) {
         enriched.info_concurrent = compHist[0].commentaire;
       }
-      // potential_rating vient directement de la base
     }
 
     setModel(enriched);
@@ -166,6 +207,9 @@ export const EstablishmentSheet = ({
     setActions(a || []);
     setParams(p || []);
     setLoading(false);
+
+    // Charge les autres établissements pour la détection de doublons
+    await fetchAllEstablishmentsForDuplicates(establishmentId);
   }
 
   // ESC pour fermer
@@ -205,6 +249,7 @@ export const EstablishmentSheet = ({
         setActions([]);
         setLoading(true);
         void fetchParamsOnly();
+        void fetchAllEstablishmentsForDuplicates(null);
       }
     } else {
       setModel(null);
@@ -212,6 +257,8 @@ export const EstablishmentSheet = ({
       setActions([]);
       setParams([]);
       setCitySuggestions([]);
+      setAllEstablishments([]);
+      setDuplicateMatches([]);
     }
   }, [open, establishmentId]);
 
@@ -310,22 +357,11 @@ export const EstablishmentSheet = ({
     }
   };
 
-  const groupes = useMemo(
-    () => params.filter((p) => p.categorie === "groupe"),
-    [params]
-  );
-  const secteurs = useMemo(
-    () => params.filter((p) => p.categorie === "secteur"),
-    [params]
-  );
-  const activites = useMemo(
-    () => params.filter((p) => p.categorie === "activite"),
-    [params]
-  );
-  const concurrents = useMemo(
-    () => params.filter((p) => p.categorie === "concurrent"),
-    [params]
-  );
+  // Listes paramétrage (sans useMemo pour éviter TS2589)
+  const groupes = params.filter((p) => p.categorie === "groupe");
+  const secteurs = params.filter((p) => p.categorie === "secteur");
+  const activites = params.filter((p) => p.categorie === "activite");
+  const concurrents = params.filter((p) => p.categorie === "concurrent");
 
   // Quick actions -> création d'une action + ouverture directe en édition
   const handleQuickAction = async (type: QuickActionType) => {
@@ -366,10 +402,95 @@ export const EstablishmentSheet = ({
     }
   };
 
-  // Sauvegarde en mode création
+  // Gestion ville / code postal : saisie dans un sens ou l'autre
+  const handleCityFieldChange = async (
+    field: "ville" | "code_postal",
+    value: string
+  ) => {
+    if (field === "ville") {
+      onChange({ ville: value });
+    } else {
+      onChange({ code_postal: value });
+    }
+
+    const trimmed = value.trim();
+    if (cityTimeoutRef.current) {
+      window.clearTimeout(cityTimeoutRef.current);
+    }
+    if (trimmed.length < 2) {
+      setCitySuggestions([]);
+      return;
+    }
+
+    cityTimeoutRef.current = window.setTimeout(async () => {
+      setCityLoading(true);
+      const res = await searchCitySuggestions(trimmed);
+      setCitySuggestions(res);
+      setCityLoading(false);
+    }, 250);
+  };
+
+  const handleSelectCitySuggestion = (s: CitySuggestion) => {
+    onChange({
+      ville: s.nom,
+      code_postal: s.code_postal,
+    });
+    setCitySuggestions([]);
+  };
+
+  // Gestion Nom établissement : mise à jour + détection doublons "live"
+  const handleNameChange = (value: string) => {
+    onChange({ nom: value });
+
+    const trimmed = value.trim();
+    if (trimmed.length < 3 || allEstablishments.length === 0) {
+      setDuplicateMatches([]);
+      return;
+    }
+
+    const normalizedInput = normalizeText(trimmed);
+
+    const matches = allEstablishments
+      .filter((e) => {
+        const n = normalizeText(e.nom);
+        if (!n) return false;
+        return (
+          n === normalizedInput ||
+          n.includes(normalizedInput) ||
+          normalizedInput.includes(n)
+        );
+      })
+      .slice(0, 5);
+
+    setDuplicateMatches(matches);
+  };
+
+  // Sauvegarde en mode création (avec contrôle doublons stricts nom+ville)
   const handleCreateSave = async () => {
     if (!model) return;
     if (!model.nom || model.nom.trim() === "") return;
+
+    const normalizedNom = normalizeText(model.nom);
+    const normalizedVille = normalizeText(model.ville);
+
+    // Doublon strict : même nom + même ville
+    const strictDuplicate = allEstablishments.find((e) => {
+      const n = normalizeText(e.nom);
+      const v = normalizeText(e.ville);
+      if (!normalizedNom || !normalizedVille) return false;
+      return n === normalizedNom && v === normalizedVille;
+    });
+
+    if (strictDuplicate) {
+      const confirmed = window.confirm(
+        `Un établissement existe déjà avec ce nom et cette ville :\n\n` +
+          `"${strictDuplicate.nom}" (${strictDuplicate.ville || "ville non renseignée"}).\n\n` +
+          `Êtes-vous certain de vouloir créer un nouvel établissement ?`
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
 
     const {
       data: { user },
@@ -403,45 +524,6 @@ export const EstablishmentSheet = ({
     } else if (error) {
       console.error("Erreur création établissement", error);
     }
-  };
-
-  // Gestion ville / code postal : saisie dans un sens ou l'autre
-  const handleCityFieldChange = async (
-    field: "ville" | "code_postal",
-    value: string
-  ) => {
-    // On met à jour le modèle immédiatement
-    if (field === "ville") {
-      onChange({ ville: value });
-    } else {
-      onChange({ code_postal: value });
-    }
-
-    // Reset si trop court
-    const trimmed = value.trim();
-    if (cityTimeoutRef.current) {
-      window.clearTimeout(cityTimeoutRef.current);
-    }
-    if (trimmed.length < 2) {
-      setCitySuggestions([]);
-      return;
-    }
-
-    // Debounce appel API
-    cityTimeoutRef.current = window.setTimeout(async () => {
-      setCityLoading(true);
-      const res = await searchCitySuggestions(trimmed);
-      setCitySuggestions(res);
-      setCityLoading(false);
-    }, 250);
-  };
-
-  const handleSelectCitySuggestion = (s: CitySuggestion) => {
-    onChange({
-      ville: s.nom,
-      code_postal: s.code_postal,
-    });
-    setCitySuggestions([]);
   };
 
   // Option courante de potentiel (badge)
@@ -508,6 +590,8 @@ export const EstablishmentSheet = ({
                         </SelectContent>
                       </Select>
                     </div>
+
+                    {/* Nom + alerte doublons */}
                     <div className="col-span-2">
                       <label className="text-sm font-medium text-slate-700">
                         Nom
@@ -515,9 +599,35 @@ export const EstablishmentSheet = ({
                       <Input
                         className="mt-1"
                         value={model.nom || ""}
-                        onChange={(e) => onChange({ nom: e.target.value })}
+                        onChange={(e) => handleNameChange(e.target.value)}
+                        placeholder="Nom de l'établissement"
                       />
+                      {duplicateMatches.length > 0 && (
+                        <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                          <p className="font-medium mb-1">
+                            Attention : établissement similaire déjà présent
+                            dans votre base.
+                          </p>
+                          <ul className="space-y-0.5">
+                            {duplicateMatches.map((e) => (
+                              <li
+                                key={e.id}
+                                className="flex items-center justify-between"
+                              >
+                                <span className="font-semibold">{e.nom}</span>
+                                <span className="text-[11px] text-amber-800">
+                                  {e.ville || "Ville non renseignée"}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                          <p className="mt-1 text-[11px]">
+                            Vous pouvez continuer la création si nécessaire.
+                          </p>
+                        </div>
+                      )}
                     </div>
+
                     <div>
                       <label className="text-sm font-medium text-slate-700">
                         Groupe
@@ -630,7 +740,6 @@ export const EstablishmentSheet = ({
                         }
                         placeholder="Ex : Lyon"
                       />
-                      {/* Suggestions ville / CP sous le champ ville */}
                       {cityLoading && (
                         <p className="text-[11px] text-slate-400 mt-1">
                           Recherche des communes...

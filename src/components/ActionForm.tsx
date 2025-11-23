@@ -1,5 +1,4 @@
-// src/components/ActionForm.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -43,13 +42,16 @@ interface ActionFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   prefilledDate?: string;
-  /** 
-   * - null / undefined = ouverture depuis Prospection (l'user choisit l'établissement)
-   * - id défini = ouverture depuis la fiche établissement (select verrouillé)
-   */
-  establishmentId?: string | null;
+  establishmentId?: string | null; // si fourni = fiche client
   onSuccess: () => void;
   overrideCommercialId?: string | null;
+}
+
+/** Suggestion de ville/code postal (local à ce composant) */
+interface CitySuggestion {
+  codePostal: string;
+  ville: string;
+  departement?: string;
 }
 
 export function ActionForm({
@@ -74,18 +76,24 @@ export function ActionForm({
     prefilledDate || new Date().toISOString().slice(0, 10)
   );
   const [commentaire, setCommentaire] = useState("");
-  const [contactVu, setContactVu] = useState("");
+  const [contactVu, setContactVu] = useState(""); // Personne vue pour visite / rdv
 
-  // Vrai si on vient de la fiche établissement (et donc établissement imposé)
-  const isFromEstablishmentSheet = Boolean(establishmentId);
+  // --- Création rapide établissement (dans le popup d'action) ---
 
-  // Création rapide établissement
   const [creatingEstab, setCreatingEstab] = useState(false);
   const [newEstabNom, setNewEstabNom] = useState("");
   const [newEstabVille, setNewEstabVille] = useState("");
+  const [newEstabPostal, setNewEstabPostal] = useState("");
   const [newEstabStatut, setNewEstabStatut] = useState<
     "prospect" | "client" | "ancien_client"
   >("prospect");
+
+  const [creatingEstabLoading, setCreatingEstabLoading] = useState(false);
+
+  // Suggestions CP / Ville (locales à ce composant, pas de dépendance externe)
+  const [citySuggestions, setCitySuggestions] = useState<CitySuggestion[]>([]);
+  const [showCitySuggestions, setShowCitySuggestions] = useState(false);
+  const lastCityQueryRef = useRef<string>("");
 
   useEffect(() => {
     if (open) {
@@ -95,16 +103,18 @@ export function ActionForm({
       setType("phoning");
       setCommentaire("");
       setContactVu("");
-      setCreatingEstab(false);
-      setNewEstabNom("");
-      setNewEstabVille("");
-      setNewEstabStatut("prospect");
-
       if (establishmentId) {
         setSelectedEstabId(establishmentId);
       } else {
         setSelectedEstabId("");
       }
+      // reset création rapide
+      setCreatingEstab(false);
+      setNewEstabNom("");
+      setNewEstabVille("");
+      setNewEstabPostal("");
+      setCitySuggestions([]);
+      setShowCitySuggestions(false);
     }
   }, [open, prefilledDate, establishmentId]);
 
@@ -119,6 +129,73 @@ export function ActionForm({
     }
   };
 
+  // --- Appel direct à l'API Gouv pour CP / Ville (local) ---
+
+  const fetchCitiesFromGeoApi = async (query: string): Promise<CitySuggestion[]> => {
+    const q = query.trim();
+    if (!q || q.length < 2) return [];
+
+    const isPostal = /^[0-9]+$/.test(q);
+    const params = new URLSearchParams();
+
+    if (isPostal) {
+      params.set("codePostal", q);
+    } else {
+      params.set("nom", q);
+    }
+
+    params.set("fields", "codesPostaux,nom,codeDepartement");
+    params.set("boost", "population");
+    params.set("limit", "15");
+
+    const url = `https://geo.api.gouv.fr/communes?${params.toString()}`;
+
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        console.error("geo.api.gouv.fr error", res.status);
+        return [];
+      }
+      const data = (await res.json()) as any[];
+      const suggestions: CitySuggestion[] = [];
+      data.forEach((commune) => {
+        const nom = commune.nom as string;
+        const codeDep = commune.codeDepartement as string | undefined;
+        const cps: string[] = commune.codesPostaux || [];
+        cps.forEach((cp) => {
+          suggestions.push({
+            codePostal: cp,
+            ville: nom,
+            departement: codeDep,
+          });
+        });
+      });
+      return suggestions;
+    } catch (e) {
+      console.error("Erreur appel geo.api.gouv.fr", e);
+      return [];
+    }
+  };
+
+  const handleCitySearch = async (raw: string) => {
+    const q = raw.trim();
+    setShowCitySuggestions(false);
+    setCitySuggestions([]);
+
+    if (q.length < 2) return;
+
+    lastCityQueryRef.current = q;
+    const results = await fetchCitiesFromGeoApi(q);
+    if (lastCityQueryRef.current !== q) {
+      // saisie modifiée entre temps
+      return;
+    }
+    setCitySuggestions(results);
+    if (results.length > 0) {
+      setShowCitySuggestions(true);
+    }
+  };
+
   const handleCreateEstablishment = async () => {
     if (!newEstabNom.trim()) {
       toast({
@@ -129,7 +206,7 @@ export function ActionForm({
       return;
     }
 
-    setLoading(true);
+    setCreatingEstabLoading(true);
 
     const {
       data: { user },
@@ -142,15 +219,17 @@ export function ActionForm({
       .insert({
         nom: newEstabNom.trim(),
         ville: newEstabVille.trim() || null,
+        code_postal: newEstabPostal.trim() || null,
         statut: newEstabStatut,
         commercial_id: commercialIdToUse,
       } as any)
-      .select("id, nom, ville")
+      .select("id, nom, ville, code_postal")
       .single();
 
-    setLoading(false);
+    setCreatingEstabLoading(false);
 
     if (error || !data) {
+      console.error(error);
       toast({
         variant: "destructive",
         title: "Erreur",
@@ -159,6 +238,7 @@ export function ActionForm({
       return;
     }
 
+    // On ajoute dans la liste locale + on sélectionne
     setEstablishments((prev) => [
       ...prev,
       { id: data.id, nom: data.nom, ville: data.ville },
@@ -167,6 +247,9 @@ export function ActionForm({
     setCreatingEstab(false);
     setNewEstabNom("");
     setNewEstabVille("");
+    setNewEstabPostal("");
+    setCitySuggestions([]);
+    setShowCitySuggestions(false);
 
     toast({
       title: "Établissement créé",
@@ -176,7 +259,6 @@ export function ActionForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
     if (!selectedEstabId) {
       toast({
         variant: "destructive",
@@ -185,7 +267,6 @@ export function ActionForm({
       });
       return;
     }
-
     if (!date) {
       toast({
         variant: "destructive",
@@ -195,6 +276,7 @@ export function ActionForm({
       return;
     }
 
+    // Vérification de la personne vue si visite / rdv
     if ((type === "visite" || type === "rdv") && !contactVu.trim()) {
       toast({
         variant: "destructive",
@@ -256,7 +338,11 @@ export function ActionForm({
     onOpenChange(false);
   };
 
-  const renderTypeButton = (t: ActionType, label: string, icon: JSX.Element) => {
+  const renderTypeButton = (
+    t: ActionType,
+    label: string,
+    icon: JSX.Element
+  ) => {
     const active = type === t;
     return (
       <button
@@ -287,34 +373,29 @@ export function ActionForm({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* ÉTABLISSEMENT + CREATION RAPIDE */}
+          {/* Sélection établissement + création rapide */}
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <label className="text-sm font-medium text-slate-700">
                 Établissement
               </label>
-
-              {!isFromEstablishmentSheet && (
-                <Button
+              {/* Bouton création rapide uniquement si on n'est pas dans une fiche client figée */}
+              {!establishmentId && (
+                <button
                   type="button"
-                  variant={creatingEstab ? "default" : "outline"}
-                  size="sm"
-                  className="h-8 gap-1 text-xs"
                   onClick={() => setCreatingEstab((prev) => !prev)}
+                  className="inline-flex items-center gap-1 text-xs text-[#840404] hover:text-[#5c0404]"
                 >
                   <Plus className="h-3 w-3" />
-                  <span>
-                    {creatingEstab ? "Annuler la création" : "Création rapide"}
-                  </span>
-                </Button>
+                  Nouveau rapide
+                </button>
               )}
             </div>
 
-            {/* Select établissement */}
             <Select
               value={selectedEstabId}
               onValueChange={setSelectedEstabId}
-              disabled={isFromEstablishmentSheet}
+              disabled={!!establishmentId}
             >
               <SelectTrigger className="h-10">
                 <SelectValue placeholder="Sélectionner un établissement" />
@@ -322,58 +403,123 @@ export function ActionForm({
               <SelectContent className="max-h-72">
                 {establishments.map((estab) => (
                   <SelectItem key={estab.id} value={estab.id}>
-                    {estab.nom} ({estab.ville || "Ville inconnue"})
+                    {estab.nom} {estab.ville ? `(${estab.ville})` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
 
-            {/* Création rapide d’établissement (nom + ville + statut) */}
-            {!isFromEstablishmentSheet && creatingEstab && (
-              <div className="mt-3 space-y-2 rounded-lg border border-dashed border-slate-300 bg-slate-50/60 p-3">
-                <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
-                  <Building2 className="h-3.5 w-3.5" />
-                  Création rapide d&apos;un établissement
+            {/* Bloc création rapide établissement */}
+            {creatingEstab && !establishmentId && (
+              <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3 space-y-3">
+                <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                  <Building2 className="h-4 w-4 text-[#840404]" />
+                  Création rapide d&apos;établissement
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2">
-                  <Input
-                    value={newEstabNom}
-                    onChange={(e) => setNewEstabNom(e.target.value)}
-                    placeholder="Nom établissement *"
-                    className="h-9 text-sm"
-                  />
-                  <Input
-                    value={newEstabVille}
-                    onChange={(e) => setNewEstabVille(e.target.value)}
-                    placeholder="Ville"
-                    className="h-9 text-sm"
-                  />
-                  <Select
-                    value={newEstabStatut}
-                    onValueChange={(v: any) => setNewEstabStatut(v)}
-                  >
-                    <SelectTrigger className="h-9 text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="prospect">Prospect</SelectItem>
-                      <SelectItem value="client">Client</SelectItem>
-                      <SelectItem value="ancien_client">
-                        Ancien client
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2">
+                    <label className="text-xs font-medium text-slate-700">
+                      Nom *
+                    </label>
+                    <Input
+                      className="mt-1 h-9 text-sm"
+                      value={newEstabNom}
+                      onChange={(e) => setNewEstabNom(e.target.value)}
+                      placeholder="Nom établissement"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-slate-700">
+                      Code postal
+                    </label>
+                    <Input
+                      className="mt-1 h-9 text-sm"
+                      value={newEstabPostal}
+                      onChange={async (e) => {
+                        const v = e.target.value;
+                        setNewEstabPostal(v);
+                        await handleCitySearch(v);
+                      }}
+                      placeholder="Ex : 69003"
+                    />
+                  </div>
+
+                  <div className="relative">
+                    <label className="text-xs font-medium text-slate-700">
+                      Ville
+                    </label>
+                    <Input
+                      className="mt-1 h-9 text-sm"
+                      value={newEstabVille}
+                      onChange={async (e) => {
+                        const v = e.target.value;
+                        setNewEstabVille(v);
+                        await handleCitySearch(v);
+                      }}
+                      onFocus={() => {
+                        if (citySuggestions.length > 0) {
+                          setShowCitySuggestions(true);
+                        }
+                      }}
+                      placeholder="Lyon, Bron..."
+                    />
+                    {showCitySuggestions && citySuggestions.length > 0 && (
+                      <div className="absolute z-50 mt-1 w-full rounded-md border bg-white shadow-lg max-h-48 overflow-y-auto text-xs">
+                        {citySuggestions.map((s) => (
+                          <button
+                            type="button"
+                            key={`${s.codePostal}-${s.ville}`}
+                            className="w-full px-3 py-1.5 text-left hover:bg-slate-100"
+                            onClick={() => {
+                              setNewEstabPostal(s.codePostal);
+                              setNewEstabVille(s.ville);
+                              setShowCitySuggestions(false);
+                            }}
+                          >
+                            {s.ville} ({s.codePostal})
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-slate-700">
+                      Statut
+                    </label>
+                    <Select
+                      value={newEstabStatut}
+                      onValueChange={(
+                        value: "prospect" | "client" | "ancien_client"
+                      ) => setNewEstabStatut(value)}
+                    >
+                      <SelectTrigger className="mt-1 h-9 text-sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="prospect">Prospect</SelectItem>
+                        <SelectItem value="client">Client</SelectItem>
+                        <SelectItem value="ancien_client">
+                          Ancien client
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
+
                 <div className="flex justify-end gap-2 pt-1">
                   <Button
                     type="button"
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
-                    className="h-8"
                     onClick={() => {
                       setCreatingEstab(false);
                       setNewEstabNom("");
                       setNewEstabVille("");
+                      setNewEstabPostal("");
+                      setCitySuggestions([]);
+                      setShowCitySuggestions(false);
                     }}
                   >
                     Annuler
@@ -381,18 +527,17 @@ export function ActionForm({
                   <Button
                     type="button"
                     size="sm"
-                    className="h-8"
                     onClick={handleCreateEstablishment}
-                    disabled={loading || !newEstabNom.trim()}
+                    disabled={creatingEstabLoading || !newEstabNom.trim()}
                   >
-                    {loading ? "Création..." : "Créer l'établissement"}
+                    {creatingEstabLoading ? "Création..." : "Créer & sélectionner"}
                   </Button>
                 </div>
               </div>
             )}
           </div>
 
-          {/* TYPE D'ACTION */}
+          {/* Type d'action */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700">
               Type d&apos;action
@@ -421,7 +566,7 @@ export function ActionForm({
             </div>
           </div>
 
-          {/* PERSONNE VUE (visite / rdv) */}
+          {/* Personne vue pour visite / RDV */}
           {(type === "visite" || type === "rdv") && (
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700">
@@ -431,12 +576,11 @@ export function ActionForm({
                 value={contactVu}
                 onChange={(e) => setContactVu(e.target.value)}
                 placeholder="Nom du contact (ex: M. Dupont / L'accueil)"
-                autoComplete="off"
               />
             </div>
           )}
 
-          {/* DATE + STATUT */}
+          {/* Date + statut */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700">
@@ -466,7 +610,7 @@ export function ActionForm({
             </div>
           </div>
 
-          {/* COMMENTAIRE */}
+          {/* Commentaire */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700">
               Commentaire
@@ -479,7 +623,6 @@ export function ActionForm({
             />
           </div>
 
-          {/* CTA */}
           <div className="flex justify-end pt-2">
             <Button type="submit" disabled={loading} className="w-full">
               {loading ? "Enregistrement..." : "Enregistrer l'action"}
