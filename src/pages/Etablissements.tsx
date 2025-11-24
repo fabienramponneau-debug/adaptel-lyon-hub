@@ -87,8 +87,8 @@ type ActionType = "phoning" | "mailing" | "visite" | "rdv";
 type ActionStatut = "a_venir" | "effectue";
 
 export default function Etablissements() {
+  // On garde le contexte (utile ailleurs) mais on NE FILTRE PLUS par user
   const { selectedUserId, loadingUserView } = useUserView() as any;
-  const isGlobalView = selectedUserId === "tous";
 
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -163,12 +163,12 @@ export default function Etablissements() {
 
   // Fetch data
   useEffect(() => {
-    if (!loadingUserView && selectedUserId) {
+    if (!loadingUserView) {
       fetchRows();
     }
     fetchParametrages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedUserId, loadingUserView, fStatut]);
+  }, [loadingUserView, fStatut]);
 
   async function fetchRows() {
     setLoading(true);
@@ -185,8 +185,8 @@ export default function Etablissements() {
       )
       .order("nom", { ascending: true });
 
-    // ❌ IMPORTANT : on NE FILTRE PLUS par commercial_id ici.
-    // Tous les utilisateurs voient tous les établissements.
+    // ❌ SUPPRESSION du filtrage par commercial_id
+    // Tous les users voient tous les établissements
 
     // Filtrage actif / archivé
     if (fStatut === "archived") {
@@ -351,10 +351,7 @@ export default function Etablissements() {
     setQuickLoading(true);
 
     const { data: sessionData } = await supabase.auth.getSession();
-    const userId =
-      selectedUserId === "tous"
-        ? sessionData.session?.user.id
-        : selectedUserId;
+    const userId = sessionData.session?.user.id || null;
 
     const isDuplicate = rows.some(
       (r: any) =>
@@ -385,7 +382,7 @@ export default function Etablissements() {
           quickForm.activiteId === NONE_VALUE ? null : quickForm.activiteId,
         ville: quickForm.ville || null,
         code_postal: quickForm.code_postal || null,
-        commercial_id: userId,
+        commercial_id: userId, // toujours l'utilisateur connecté
         actif: true,
       } as any)
       .select("id")
