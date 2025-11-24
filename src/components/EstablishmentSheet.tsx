@@ -88,6 +88,21 @@ const normalizeText = (str: string | null | undefined) =>
     .replace(/\s+/g, " ")
     .trim();
 
+// Format date/heure FR pour les infos "Créé / Modifié"
+const formatDateTime = (value?: string | null) => {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+
+  return d.toLocaleString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
 export const EstablishmentSheet = ({
   establishmentId,
   open,
@@ -166,7 +181,8 @@ export const EstablishmentSheet = ({
            groupe:groupe_id(valeur),
            secteur:secteur_id(valeur),
            activite:activite_id(valeur),
-           concurrent:concurrent_id(valeur)`
+           concurrent:concurrent_id(valeur),
+           commercial:commercial_id(nom, prenom)`
         )
         .eq("id", establishmentId)
         .single(),
@@ -583,6 +599,18 @@ export const EstablishmentSheet = ({
 
   if (!open) return null;
 
+  // Préparation des infos meta (créé / modifié)
+  const createdAtLabel = formatDateTime(model?.created_at);
+  const updatedAtLabel = formatDateTime(model?.updated_at);
+
+  const creatorName =
+    model?.commercial &&
+    (model.commercial.prenom || model.commercial.nom)
+      ? `${model.commercial.prenom ?? ""} ${
+          model.commercial.nom ?? ""
+        }`.trim()
+      : null;
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end pointer-events-none">
       {/* Overlay clicable derrière la fiche */}
@@ -598,6 +626,31 @@ export const EstablishmentSheet = ({
           onClose={onClose}
           onQuickAction={handleQuickAction}
         />
+
+        {/* Bandeau infos "Créé / Modifié" */}
+        {model && (createdAtLabel || updatedAtLabel) && (
+          <div className="px-6 pt-3 pb-2 border-b border-slate-100 text-xs text-slate-500 flex flex-wrap gap-x-6 gap-y-1">
+            {createdAtLabel && (
+              <div>
+                <span className="font-medium">Créé le</span>{" "}
+                {createdAtLabel}
+                {creatorName && (
+                  <>
+                    {" "}
+                    par{" "}
+                    <span className="font-medium">{creatorName}</span>
+                  </>
+                )}
+              </div>
+            )}
+            {updatedAtLabel && (
+              <div>
+                <span className="font-medium">Modifié le</span>{" "}
+                {updatedAtLabel}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="p-6">
           {loading ? (

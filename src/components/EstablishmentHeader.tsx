@@ -1,3 +1,4 @@
+// src/components/EstablishmentHeader.tsx
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
 import {
@@ -54,12 +55,6 @@ export const EstablishmentHeader = ({
 
   if (!establishment) return null;
 
-  const formattedDate = new Date().toLocaleDateString("fr-FR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "2-digit",
-  });
-
   return (
     <div className="sticky top-0 bg-white border-b border-slate-200 p-6 z-10">
       <div className="flex items-start justify-between gap-4">
@@ -95,7 +90,7 @@ export const EstablishmentHeader = ({
           </div>
         </div>
 
-        {/* Bloc droit : actions + sauvegarde + date en dessous */}
+        {/* Bloc droit : actions + sauvegarde */}
         <div className="flex flex-col items-end gap-1 flex-shrink-0">
           <div className="flex items-center gap-2">
             {/* Actions rapides */}
@@ -152,11 +147,6 @@ export const EstablishmentHeader = ({
               <X className="h-4 w-4" />
             </Button>
           </div>
-
-          {/* Date modifié sous le bouton Sauvegarder */}
-          <span className="text-slate-400 text-xs md:text-sm">
-            Modifié le {formattedDate}
-          </span>
         </div>
       </div>
     </div>
