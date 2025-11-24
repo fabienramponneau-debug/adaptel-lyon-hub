@@ -32,6 +32,7 @@ import {
 import {
   searchCitySuggestions,
   CitySuggestion,
+  geocodeAddress,
 } from "@/utils/geoApi";
 
 interface Props {
@@ -244,6 +245,8 @@ export const EstablishmentSheet = ({
           concurrent_id: null,
           info_concurrent: "",
           coefficient_concurrent: "",
+          latitude: null,
+          longitude: null,
         });
         setContacts([]);
         setActions([]);
@@ -295,6 +298,43 @@ export const EstablishmentSheet = ({
         setSaving("saving");
 
         const full: any = { ...payload };
+
+        // --- GÉOCODAGE SI ADRESSE / CP / VILLE MODIFIÉS
+        //     OU SI PAS ENCORE DE COORDONNÉES EN BASE ---
+        const addressFields: (keyof typeof full)[] = [
+          "adresse",
+          "code_postal",
+          "ville",
+        ];
+
+        const hasAddressPatch = addressFields.some((f) =>
+          Object.prototype.hasOwnProperty.call(full, f)
+        );
+
+        const missingCoords =
+          model.latitude == null || model.longitude == null;
+
+        const shouldGeocode = hasAddressPatch || missingCoords;
+
+        if (shouldGeocode) {
+          const modelForGeocode: any = {
+            ...model,
+            ...full,
+          };
+          const coords = await geocodeAddress(
+            modelForGeocode.adresse || null,
+            modelForGeocode.code_postal || null,
+            modelForGeocode.ville || null
+          );
+
+          if (coords) {
+            full.latitude = coords.latitude;
+            full.longitude = coords.longitude;
+          } else {
+            full.latitude = null;
+            full.longitude = null;
+          }
+        }
 
         // Gestion coefficient : on n'écrit pas sur establishments mais sur competitors_history
         let coefficientForHistory: number | null = null;
@@ -465,7 +505,7 @@ export const EstablishmentSheet = ({
     setDuplicateMatches(matches);
   };
 
-  // Sauvegarde en mode création (avec contrôle doublons stricts nom+ville)
+  // Sauvegarde en mode création (avec contrôle doublons stricts nom+ville + géocodage)
   const handleCreateSave = async () => {
     if (!model) return;
     if (!model.nom || model.nom.trim() === "") return;
@@ -492,6 +532,13 @@ export const EstablishmentSheet = ({
       }
     }
 
+    // GÉOCODAGE AVANT INSERT
+    const coords = await geocodeAddress(
+      model.adresse || null,
+      model.code_postal || null,
+      model.ville || null
+    );
+
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -510,6 +557,8 @@ export const EstablishmentSheet = ({
       concurrent_id: model.concurrent_id || null,
       info_concurrent: model.info_concurrent || null,
       commercial_id: user?.id ?? null,
+      latitude: coords ? coords.latitude : null,
+      longitude: coords ? coords.longitude : null,
     };
 
     const { data, error } = await supabase
