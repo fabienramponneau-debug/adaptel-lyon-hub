@@ -118,6 +118,7 @@ export const EstablishmentSheet = ({
   const [externalEditActionId, setExternalEditActionId] =
     useState<string | null>(null);
 
+  // ⚠️ on reste sur cette logique : création = pas d'establishmentId
   const isCreateMode = !establishmentId || !model?.id;
 
   // Suggestions ville / CP
@@ -521,19 +522,34 @@ export const EstablishmentSheet = ({
     setDuplicateMatches(matches);
   };
 
-  // Sauvegarde en mode création (avec contrôle doublons stricts nom+ville + géocodage)
+  // Sauvegarde en mode création (avec contrôle doublons stricts nom+ville + géocodage) – VERSION FIABILISÉE
   const handleCreateSave = async () => {
     if (!model) return;
-    if (!model.nom || model.nom.trim() === "") return;
+
+    if (!model.nom || model.nom.trim() === "") {
+      alert("Le nom de l'établissement est obligatoire.");
+      return;
+    }
+
+    // Vérifier session utilisateur
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      alert("Votre session a expiré. Veuillez vous reconnecter.");
+      return;
+    }
 
     const normalizedNom = normalizeText(model.nom);
     const normalizedVille = normalizeText(model.ville);
 
-    // Doublon strict : même nom + même ville
+    // Doublon strict : même nom + même ville (uniquement si ville saisie)
     const strictDuplicate = allEstablishments.find((e) => {
+      if (!normalizedNom || !normalizedVille) return false;
       const n = normalizeText(e.nom);
       const v = normalizeText(e.ville);
-      if (!normalizedNom || !normalizedVille) return false;
       return n === normalizedNom && v === normalizedVille;
     });
 
@@ -548,46 +564,65 @@ export const EstablishmentSheet = ({
       }
     }
 
-    // GÉOCODAGE AVANT INSERT
-    const coords = await geocodeAddress(
-      model.adresse || null,
-      model.code_postal || null,
-      model.ville || null
-    );
+    setSaving("saving");
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    try {
+      // GÉOCODAGE AVANT INSERT
+      const coords = await geocodeAddress(
+        model.adresse || null,
+        model.code_postal || null,
+        model.ville || null
+      );
 
-    const payload: any = {
-      nom: model.nom.trim(),
-      statut: model.statut || "prospect",
-      potential_rating: model.potential_rating ?? null,
-      groupe_id: model.groupe_id || null,
-      activite_id: model.activite_id || null,
-      secteur_id: model.secteur_id || null,
-      adresse: model.adresse || null,
-      code_postal: model.code_postal || null,
-      ville: model.ville || null,
-      commentaire: model.commentaire || null,
-      concurrent_id: model.concurrent_id || null,
-      info_concurrent: model.info_concurrent || null,
-      commercial_id: user?.id ?? null,
-      latitude: coords ? coords.latitude : null,
-      longitude: coords ? coords.longitude : null,
-    };
+      const payload: any = {
+        nom: model.nom.trim(),
+        statut: model.statut || "prospect",
+        potential_rating: model.potential_rating ?? null,
+        groupe_id: model.groupe_id || null,
+        activite_id: model.activite_id || null,
+        secteur_id: model.secteur_id || null,
+        adresse: model.adresse || null,
+        code_postal: model.code_postal || null,
+        ville: model.ville || null,
+        commentaire: model.commentaire || null,
+        concurrent_id: model.concurrent_id || null,
+        info_concurrent: model.info_concurrent || null,
+        commercial_id: user.id, // 🔐 toujours renseigné
+        latitude: coords ? coords.latitude : null,
+        longitude: coords ? coords.longitude : null,
+      };
 
-    const { data, error } = await supabase
-      .from("establishments")
-      .insert(payload)
-      .select("id")
-      .single();
+      const { data, error } = await supabase
+        .from("establishments")
+        .insert(payload)
+        .select("id")
+        .single();
 
-    if (!error && data) {
+      if (error) {
+        console.error("Erreur création établissement", error);
+        alert(
+          "Impossible de créer l'établissement.\n\n" +
+            (error.message || "Erreur inconnue.")
+        );
+        return;
+      }
+
+      if (!data) {
+        alert(
+          "Création terminée, mais aucune donnée retournée par le serveur."
+        );
+        return;
+      }
+
       onUpdate();
       onClose();
-    } else if (error) {
-      console.error("Erreur création établissement", error);
+    } catch (err: any) {
+      console.error("Exception création établissement", err);
+      alert(
+        "Une erreur inattendue est survenue lors de la création de l'établissement."
+      );
+    } finally {
+      setSaving("idle");
     }
   };
 
@@ -714,7 +749,7 @@ export const EstablishmentSheet = ({
                             {duplicateMatches.map((e) => (
                               <li
                                 key={e.id}
-                                className="flex items-center justify-between"
+                                className="flex items-center justify_between"
                               >
                                 <span className="font-semibold">{e.nom}</span>
                                 <span className="text-[11px] text-amber-800">
@@ -781,7 +816,7 @@ export const EstablishmentSheet = ({
                       </Select>
                     </div>
                     <div>
-                      <label className="text-sm font-medium text-slate-700">
+                      <label className="text_sm font-medium text-slate-700">
                         Secteur
                       </label>
                       <Select
