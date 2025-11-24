@@ -185,10 +185,8 @@ export default function Etablissements() {
       )
       .order("nom", { ascending: true });
 
-    // Filtrage par commercial (si tu gardes cette logique)
-    if (!isGlobalView && selectedUserId && selectedUserId !== "tous") {
-      query = query.eq("commercial_id", selectedUserId);
-    }
+    // ❌ IMPORTANT : on NE FILTRE PLUS par commercial_id ici.
+    // Tous les utilisateurs voient tous les établissements.
 
     // Filtrage actif / archivé
     if (fStatut === "archived") {
@@ -1207,9 +1205,7 @@ export default function Etablissements() {
                         <TableCell className="py-3">
                           <span className="text-sm text-gray-700 font-medium">
                             {r.ville || "-"}
-                            {r.code_postal
-                              ? ` (${r.code_postal})`
-                              : ""}
+                            {r.code_postal ? ` (${r.code_postal})` : ""}
                           </span>
                         </TableCell>
                         <TableCell className="py-3">
