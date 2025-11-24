@@ -173,6 +173,9 @@ export type Database = {
           statut: Database["public"]["Enums"]["establishment_status"]
           updated_at: string
           ville: string | null
+          // NOUVEAU
+          latitude: number | null
+          longitude: number | null
         }
         Insert: {
           activite_id?: string | null
@@ -190,6 +193,9 @@ export type Database = {
           statut?: Database["public"]["Enums"]["establishment_status"]
           updated_at?: string
           ville?: string | null
+          // NOUVEAU
+          latitude?: number | null
+          longitude?: number | null
         }
         Update: {
           activite_id?: string | null
@@ -207,6 +213,9 @@ export type Database = {
           statut?: Database["public"]["Enums"]["establishment_status"]
           updated_at?: string
           ville?: string | null
+          // NOUVEAU
+          latitude?: number | null
+          longitude?: number | null
         }
         Relationships: [
           {
