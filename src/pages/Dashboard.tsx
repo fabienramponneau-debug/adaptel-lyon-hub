@@ -1,5 +1,7 @@
-// src/pages/Dashboard.tsx - Finalisé (Header, Filtre User, Stabilité, Marge uniforme)
-import { useEffect, useState, useMemo, useRef } from "react";
+// src/pages/Dashboard.tsx
+// Dashboard avec 2 sections structurées, navigation semaines et suggestions globales
+
+import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { DashboardStats } from "@/components/DashboardStats";
 import {
@@ -17,8 +19,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Lightbulb,
-  Activity,
-  Target,
   TrendingUp,
   LayoutDashboard,
 } from "lucide-react";
@@ -31,9 +31,9 @@ import {
   endOfMonth,
   addMonths,
   parseISO,
+  getISOWeek,
 } from "date-fns";
 import { fr } from "date-fns/locale";
-import { Button } from "@/components/ui/button";
 import { SuggestionCard } from "@/components/SuggestionCard";
 import { SuggestionForm } from "@/components/SuggestionForm";
 import { EstablishmentSheet } from "@/components/EstablishmentSheet";
@@ -62,7 +62,11 @@ interface Suggestion {
   id: string;
   titre: string;
   description: string | null;
-  type: "suggestion" | "idee" | "prospect_a_verifier" | "info_commerciale";
+  type:
+    | "suggestion"
+    | "idee"
+    | "prospect_a_verifier"
+    | "info_commerciale";
   statut: "a_traiter" | "en_cours" | "traite";
   priorite: "basse" | "normale" | "haute";
   created_at: string;
@@ -72,10 +76,7 @@ interface Suggestion {
 type WeekKey = "-1" | "0" | "1";
 
 const Dashboard = () => {
-  const {
-    selectedUserId,
-    loadingUserView,
-  } = useUserView() as any; 
+  const { selectedUserId, loadingUserView } = useUserView() as any;
   const isGlobalView = selectedUserId === "tous";
 
   const [stats, setStats] = useState<Stats>({
@@ -84,32 +85,34 @@ const Dashboard = () => {
     anciensClients: 0,
   });
 
-  const [upcomingActions, setUpcomingActions] = useState<Action[] | any>([]);
-  const [reminders, setReminders] = useState<Action[] | any>([]);
-  const [suggestions, setSuggestions] = useState<Suggestion[] | any>([]);
+  const [upcomingActions, setUpcomingActions] = useState<Action[]>([]);
+  const [reminders, setReminders] = useState<Action[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
 
-  const [viewMode, setViewMode] = useState<"week" | "month">("week");
+  const [viewMode] = useState<"week" | "month">("week");
   const [periodOffset, setPeriodOffset] = useState(0);
 
   const [weeklyActions, setWeeklyActions] = useState<
-    Record<WeekKey, Action[] | any> 
+    Record<WeekKey, Action[]>
   >({
     "-1": [],
     "0": [],
     "1": [],
   });
 
+  // Offset pour la synthèse d’activité (section du bas)
+  const [summaryOffset, setSummaryOffset] = useState(0);
+
   const [selectedEstablishmentId, setSelectedEstablishmentId] =
     useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const applyUserFilter = (query: any) => {
-    if (isGlobalView || !selectedUserId || selectedUserId === 'tous') {
-        return query;
+    if (isGlobalView || !selectedUserId || selectedUserId === "tous") {
+      return query;
     }
-    return query.eq('user_id', selectedUserId);
+    return query.eq("user_id", selectedUserId);
   };
-
 
   useEffect(() => {
     fetchStats();
@@ -120,12 +123,11 @@ const Dashboard = () => {
     fetchActionsAndReminders();
     fetchSuggestions();
     fetchWeeklyActivity();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, periodOffset, selectedUserId, loadingUserView]);
-
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, periodOffset, selectedUserId, loadingUserView, summaryOffset]);
 
   const activeSuggestionsCount = suggestions.filter(
-    (s: any) => s.statut !== "traite"
+    (s) => s.statut !== "traite"
   ).length;
 
   const fetchStats = async () => {
@@ -142,41 +144,27 @@ const Dashboard = () => {
 
   const getRangeForView = () => {
     const today = new Date();
-    if (viewMode === "week") {
-      const base = addWeeks(
-        startOfWeek(today, { weekStartsOn: 1 }),
-        periodOffset
-      );
-      const start = base;
-      const end = endOfWeek(base, { weekStartsOn: 1 });
-      return { start, end };
-    } else {
-      const base = addMonths(today, periodOffset);
-      const start = startOfMonth(base);
-      const end = endOfMonth(base);
-      return { start, end };
-    }
+    const base = addWeeks(
+      startOfWeek(today, { weekStartsOn: 1 }),
+      periodOffset
+    );
+    const start = base;
+    const end = endOfWeek(base, { weekStartsOn: 1 });
+    return { start, end };
   };
 
   const getRangeLabel = () => {
     const { start, end } = getRangeForView();
-    if (viewMode === "week") {
-      const thisWeekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
-      const diff =
-        (start.getTime() - thisWeekStart.getTime()) / (7 * 24 * 3600 * 1000);
-      if (diff === 0) return "Semaine en cours";
-      if (diff === -1) return "Semaine dernière";
-      if (diff === 1) return "Semaine prochaine";
-      return `Semaine du ${format(start, "dd/MM", {
-        locale: fr,
-      })} au ${format(end, "dd/MM", { locale: fr })}`;
-    } else {
-      const thisMonth = new Date().getMonth();
-      const targetMonth = addMonths(new Date(), periodOffset).getMonth();
-      if (targetMonth === thisMonth && periodOffset === 0)
-        return "Mois en cours";
-      return format(start, "MMMM yyyy", { locale: fr });
-    }
+    const thisWeekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
+    const diff =
+      (start.getTime() - thisWeekStart.getTime()) /
+      (7 * 24 * 3600 * 1000);
+    if (diff === 0) return "Semaine en cours";
+    if (diff === -1) return "Semaine dernière";
+    if (diff === 1) return "Semaine prochaine";
+    return `Semaine du ${format(start, "dd/MM", {
+      locale: fr,
+    })} au ${format(end, "dd/MM", { locale: fr })}`;
   };
 
   const fetchActionsAndReminders = async () => {
@@ -184,6 +172,7 @@ const Dashboard = () => {
     const startStr = format(start, "yyyy-MM-dd");
     const endStr = format(end, "yyyy-MM-dd");
 
+    // Actions à venir
     let actionsQuery = supabase
       .from("actions")
       .select(
@@ -193,12 +182,12 @@ const Dashboard = () => {
       .gte("date_action", startStr)
       .lte("date_action", endStr)
       .order("date_action", { ascending: true });
-      
+
     actionsQuery = applyUserFilter(actionsQuery);
     const { data: actionsData } = await actionsQuery;
+    setUpcomingActions((actionsData || []) as Action[]);
 
-    setUpcomingActions(actionsData || []);
-
+    // Rappels
     let reminderQuery = supabase
       .from("actions")
       .select(
@@ -208,30 +197,32 @@ const Dashboard = () => {
       .gte("relance_date", startStr)
       .lte("relance_date", endStr)
       .order("relance_date", { ascending: true });
-      
+
     reminderQuery = applyUserFilter(reminderQuery);
     const { data: reminderData } = await reminderQuery;
-
-    setReminders(reminderData || []);
+    setReminders((reminderData || []) as Action[]);
   };
 
   const fetchSuggestions = async () => {
-    let query = supabase
+    // Suggestions VUES PAR TOUS : pas de filtre user ici
+    const { data } = await supabase
       .from("suggestions")
       .select("*")
       .order("created_at", { ascending: false })
       .limit(50);
-      
-    query = applyUserFilter(query);
-    const { data } = await query;
-    setSuggestions(data || []);
+
+    setSuggestions((data || []) as Suggestion[]);
   };
 
   const fetchWeeklyActivity = async () => {
     const today = new Date();
-    const thisWeekStart = startOfWeek(today, { weekStartsOn: 1 });
-    const weekMinus1Start = addWeeks(thisWeekStart, -1);
-    const weekPlus1End = endOfWeek(addWeeks(thisWeekStart, 1), {
+
+    // base = semaine centrale (offset)
+    const baseWeekStart = startOfWeek(addWeeks(today, summaryOffset), {
+      weekStartsOn: 1,
+    });
+    const weekMinus1Start = addWeeks(baseWeekStart, -1);
+    const weekPlus1End = endOfWeek(addWeeks(baseWeekStart, 1), {
       weekStartsOn: 1,
     });
 
@@ -246,11 +237,11 @@ const Dashboard = () => {
       .gte("date_action", startStr)
       .lte("date_action", endStr)
       .order("date_action", { ascending: true });
-      
+
     query = applyUserFilter(query);
     const { data } = await query;
 
-    const buckets: Record<WeekKey, Action[] | any> = {
+    const buckets: Record<WeekKey, Action[]> = {
       "-1": [],
       "0": [],
       "1": [],
@@ -259,13 +250,12 @@ const Dashboard = () => {
     (data as any[] | null)?.forEach((a) => {
       const d = parseISO(a.date_action);
       const diffDays = Math.floor(
-        (d.getTime() - thisWeekStart.getTime()) / (24 * 3600 * 1000)
+        (d.getTime() - baseWeekStart.getTime()) / (24 * 3600 * 1000)
       );
-      const weekOffset = diffDays < 0 ? -1 : diffDays > 6 ? 1 : 0;
+      const weekOffset: -1 | 0 | 1 =
+        diffDays < 0 ? -1 : diffDays > 6 ? 1 : 0;
       const key = String(weekOffset) as WeekKey;
-      if (buckets[key]) {
-        buckets[key].push(a as any);
-      }
+      buckets[key].push(a as Action);
     });
 
     setWeeklyActions(buckets);
@@ -426,26 +416,72 @@ const Dashboard = () => {
     return ordered.join(" - ");
   };
 
+  // Méta pour les semaines (-1, 0, 1) de la synthèse
+  const getWeekMeta = () => {
+    const today = new Date();
+    const todayWeekStart = startOfWeek(today, { weekStartsOn: 1 });
+    const baseWeekStart = startOfWeek(
+      addWeeks(today, summaryOffset),
+      { weekStartsOn: 1 }
+    );
+
+    const meta: Record<
+      WeekKey,
+      { start: Date; weekNumber: number; isCurrentWeek: boolean }
+    > = {
+      "-1": {
+        start: addWeeks(baseWeekStart, -1),
+        weekNumber: 0,
+        isCurrentWeek: false,
+      },
+      "0": {
+        start: baseWeekStart,
+        weekNumber: 0,
+        isCurrentWeek: false,
+      },
+      "1": {
+        start: addWeeks(baseWeekStart, 1),
+        weekNumber: 0,
+        isCurrentWeek: false,
+      },
+    };
+
+    (Object.keys(meta) as WeekKey[]).forEach((k) => {
+      meta[k].weekNumber = getISOWeek(meta[k].start);
+      meta[k].isCurrentWeek =
+        meta[k].start.getTime() === todayWeekStart.getTime();
+    });
+
+    return meta;
+  };
+
+  const weekMeta = getWeekMeta();
+
   const renderWeeklyColumn = (weekKey: WeekKey, title: string) => {
     const list = weeklyActions[weekKey] || [];
-    const visites = list.filter((a: any) => a.type === "visite").length;
-    const rdv = list.filter((a: any) => a.type === "rdv").length;
+    const visites = list.filter((a) => a.type === "visite").length;
+    const rdv = list.filter((a) => a.type === "rdv").length;
 
-    const byType: Record<string, Action[] | any> = {
+    const byType: Record<string, Action[]> = {
       phoning: [],
       mailing: [],
       visite: [],
       rdv: [],
     };
-    list.forEach((a: any) => {
+    list.forEach((a) => {
       if (!byType[a.type]) byType[a.type] = [];
       byType[a.type].push(a);
     });
 
     const prospectionDaysLabel = getProspectionDaysLabel(list);
+    const meta = weekMeta[weekKey];
+
+    const weekLabel = meta.isCurrentWeek
+      ? `Semaine ${meta.weekNumber} – Semaine en cours`
+      : `Semaine ${meta.weekNumber}`;
 
     return (
-      <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200">
+      <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow.duration-200">
         <CardHeader className="pb-3 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="flex items-center gap-3 text-sm font-semibold text-gray-900">
@@ -454,25 +490,32 @@ const Dashboard = () => {
               </div>
               <span>{title}</span>
             </CardTitle>
+            <Badge variant="outline" className="text-[10px] h-6 px-2">
+              {weekLabel}
+            </Badge>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3">
             <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-              <div className="flex items-center gap-2 mb-1">
+              <div className="flex.items-center gap-2 mb-1">
                 <div className="p-1 rounded-lg bg-purple-50">
                   <MapPin className="h-3 w-3 text-purple-600" />
                 </div>
-                <span className="text-xs font-medium text-gray-600">Visites</span>
+                <span className="text-xs font-medium text-gray-600">
+                  Visites
+                </span>
               </div>
               <div className="text-lg font-bold text-gray-900">
                 {visites}
               </div>
             </div>
             <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-              <div className="flex items-center gap-2 mb-1">
+              <div className="flex.items-center gap-2 mb-1">
                 <div className="p-1 rounded-lg bg-orange-50">
                   <Calendar className="h-3 w-3 text-orange-600" />
                 </div>
-                <span className="text-xs font-medium text-gray-600">RDV</span>
+                <span className="text-xs font-medium text-gray-600">
+                  RDV
+                </span>
               </div>
               <div className="text-lg font-bold text-gray-900">
                 {rdv}
@@ -483,7 +526,9 @@ const Dashboard = () => {
 
         <CardContent className="p-4 space-y-4">
           <div className="space-y-1">
-            <div className="text-xs font-semibold text-gray-700 mb-2">Journées de prospection</div>
+            <div className="text-xs font-semibold text-gray-700 mb-2">
+              Journées de prospection
+            </div>
             <div className="text-sm text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
               {prospectionDaysLabel}
             </div>
@@ -503,10 +548,10 @@ const Dashboard = () => {
                     </Badge>
                   </div>
                   <ul className="space-y-1">
-                    {arr.map((a: any) => (
+                    {arr.map((a) => (
                       <li
                         key={a.id}
-                        className="text-xs text-gray-600 truncate cursor-pointer hover:text-blue-600 hover:font-medium transition-all duration-150 pl-4"
+                        className="text-xs text-gray-600 truncate cursor-pointer hover:text-blue-600 hover:font-medium transition-all.duration-150 pl-4"
                         onClick={() =>
                           openEstablishment(a.etablissement_id)
                         }
@@ -537,185 +582,261 @@ const Dashboard = () => {
   if (loadingUserView) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-blue-50/30">
-        <div className="text-center text-gray-600">Chargement de la vue utilisateur...</div>
+        <div className="text-center text-gray-600">
+          Chargement de la vue utilisateur...
+        </div>
       </div>
     );
   }
 
-
   return (
-    // Suppression de max-w-7xl mx-auto ici
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50/30 p-6 space-y-8">
-        
-        {/* NOUVEL EN-TÊTE UNIFORMISÉ (Header cohérent) */}
-        <div className="flex flex-col gap-2 mb-6">
-            <div className="flex items-center gap-3">
-                <div className="p-2 bg-[#840404]/10 rounded-lg">
-                    <LayoutDashboard className="h-6 w-6 text-[#840404]" />
+    <div className="min-h-screen bg-gradient-to-br.from-gray-50 to-blue-50/30 p-6 space-y-8">
+      {/* HEADER */}
+      <div className="flex flex-col gap-2 mb-2">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-[#840404]/10 rounded-lg">
+            <LayoutDashboard className="h-6 w-6 text-[#840404]" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">
+              Tableau de Bord
+            </h1>
+            <p className="text-slate-600">
+              Vue d&apos;ensemble de l&apos;activité commerciale
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* STATS FULL WIDTH */}
+      <DashboardStats
+        prospects={stats.prospects}
+        clients={stats.clients}
+        anciensClients={stats.anciensClients}
+      />
+
+      {/* SECTION 1 : SUIVI OPÉRATIONNEL */}
+      <section className="space-y-4">
+        <Card className="border border-gray-200 shadow-sm">
+          <CardHeader className="pb-3 bg-white border-b border-gray-100 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-white shadow-sm border border-gray-200">
+                  <Calendar className="h-5 w-5 text-blue-600" />
                 </div>
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-900">
-                        Tableau de Bord
-                    </h1>
-                    <p className="text-slate-600">
-                        Vue d&apos;ensemble de l&apos;activité commerciale
-                    </p>
+                  <h2 className="text-xl font-semibold text-gray-900">
+                    Suivi opérationnel
+                  </h2>
+                  <p className="text-xs text-gray-500">
+                    Actions à venir, rappels et suggestions globales
+                  </p>
                 </div>
+              </div>
+
+              {/* Période (pour actions/rappels) */}
+              <div className="flex items-center gap-2">
+                <div className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-600">
+                  <button
+                    type="button"
+                    onClick={() => setPeriodOffset((o) => o - 1)}
+                    className="p-1 rounded-full hover:bg-white"
+                  >
+                    <ChevronLeft className="h-3 w-3" />
+                  </button>
+                  <span className="mx-2 font-medium">
+                    {getRangeLabel()}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPeriodOffset((o) => o + 1)}
+                    className="p-1 rounded-full hover:bg-white"
+                  >
+                    <ChevronRight className="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
             </div>
-        </div>
-        {/* FIN DU NOUVEL EN-TÊTE */}
+          </CardHeader>
 
-        {/* Stats en pleine largeur */}
-        <DashboardStats
-          prospects={stats.prospects}
-          clients={stats.clients}
-          anciensClients={stats.anciensClients}
-        />
-
-        {/* Section Suivi opérationnel */}
-        <section className="space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-white shadow-sm border border-gray-200">
-              <Activity className="h-5 w-5 text-blue-600" />
-            </div>
-            <h2 className="text-xl font-semibold text-gray-900">
-              Suivi Opérationnel
-            </h2>
-          </div>
-
-          <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-            {/* Actions à venir */}
-            <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200">
-              <CardHeader className="pb-3 bg-gradient-to-r from-blue-50 to-white border-b border-gray-100">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-3 text-base font-semibold text-gray-900">
-                    <div className="p-2 rounded-lg bg-blue-100">
-                      <Calendar className="h-5 w-5 text-blue-600" />
-                    </div>
-                    <span>Actions à venir</span>
-                  </CardTitle>
-                  {upcomingActions.length > 0 && (
-                    <Badge className="bg-blue-600 text-white hover:bg-blue-700">
-                      {upcomingActions.length}
-                    </Badge>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent className="p-4">
-                {upcomingActions.length === 0 ? (
-                  <div className="text-center py-8">
-                    <div className="text-gray-400 mb-2">📅</div>
-                    <p className="text-sm text-gray-500">
-                      Aucune action planifiée sur cette période
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
-                    {upcomingActions.map((action: any) =>
-                      renderActionRow(action)
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Rappels */}
-            <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200">
-              <CardHeader className="pb-3 bg-gradient-to-r from-orange-50 to-white border-b border-gray-100">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-3 text-base font-semibold text-gray-900">
-                    <div className="p-2 rounded-lg bg-orange-100">
-                      <Bell className="h-5 w-5 text-orange-600" />
-                    </div>
-                    <span>Rappels</span>
-                  </CardTitle>
-                  {reminders.length > 0 && (
-                    <Badge className="bg-orange-600 text-white hover:bg-orange-700">
-                      {reminders.length}
-                    </Badge>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent className="p-4">
-                {reminders.length === 0 ? (
-                  <div className="text-center py-8">
-                    <div className="text-gray-400 mb-2">🔔</div>
-                    <p className="text-sm text-gray-500">
-                      Aucun rappel sur cette période
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
-                    {reminders.map((action: any) =>
-                      renderReminderRow(action)
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Suggestions */}
-            <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200">
-              <CardHeader className="pb-3 bg-gradient-to-r from-amber-50 to-white border-b border-gray-100">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
+          <CardContent className="pt-4">
+            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+              {/* Actions à venir */}
+              <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200">
+                <CardHeader className="pb-3 bg-gradient-to-r from-blue-50 to-white border-b border-gray-100">
+                  <div className="flex items-center justify-between">
                     <CardTitle className="flex items-center gap-3 text-base font-semibold text-gray-900">
-                      <div className="p-2 rounded-lg bg-amber-100">
-                        <Lightbulb className="h-5 w-5 text-amber-600" />
+                      <div className="p-2 rounded-lg bg-blue-100">
+                        <Calendar className="h-5 w-5 text-blue-600" />
                       </div>
-                      <span>Suggestions</span>
+                      <span>Actions à venir</span>
                     </CardTitle>
-                    {activeSuggestionsCount > 0 && (
-                      <Badge className="bg-amber-600 text-white hover:bg-amber-700">
-                        {activeSuggestionsCount}
+                    {upcomingActions.length > 0 && (
+                      <Badge className="bg-blue-600 text-white hover:bg-blue-700">
+                        {upcomingActions.length}
                       </Badge>
                     )}
                   </div>
-                  <SuggestionForm onSuccess={refreshAll} />
-                </div>
-              </CardHeader>
-              <CardContent className="p-4">
-                {suggestions.length === 0 ? (
-                  <div className="text-center py-8">
-                    <div className="text-gray-400 mb-2">💡</div>
-                    <p className="text-sm text-gray-500 mb-4">
-                      Aucune suggestion pour le moment
-                    </p>
+                </CardHeader>
+                <CardContent className="p-4">
+                  {upcomingActions.length === 0 ? (
+                    <div className="text-center py-8">
+                      <div className="text-gray-400 mb-2">📅</div>
+                      <p className="text-sm text-gray-500">
+                        Aucune action planifiée sur cette période
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
+                      {upcomingActions.map((action) =>
+                        renderActionRow(action)
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Rappels */}
+              <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200">
+                <CardHeader className="pb-3 bg-gradient-to-r from-orange-50 to.white border-b border-gray-100">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-3 text-base font-semibold text-gray-900">
+                      <div className="p-2 rounded-lg bg-orange-100">
+                        <Bell className="h-5 w-5 text-orange-600" />
+                      </div>
+                      <span>Rappels</span>
+                    </CardTitle>
+                    {reminders.length > 0 && (
+                      <Badge className="bg-orange-600 text-white hover:bg-orange-700">
+                        {reminders.length}
+                      </Badge>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent className="p-4">
+                  {reminders.length === 0 ? (
+                    <div className="text-center py-8">
+                      <div className="text-gray-400 mb-2">🔔</div>
+                      <p className="text-sm text-gray-500">
+                        Aucun rappel sur cette période
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
+                      {reminders.map((action) =>
+                        renderReminderRow(action)
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Suggestions (globales) */}
+              <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200">
+                <CardHeader className="pb-3 bg-gradient-to-r from-amber-50 to-white border-b border-gray-100">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <CardTitle className="flex items-center gap-3 text-base font-semibold text-gray-900">
+                        <div className="p-2 rounded-lg bg-amber-100">
+                          <Lightbulb className="h-5 w-5 text-amber-600" />
+                        </div>
+                        <span>Suggestions</span>
+                      </CardTitle>
+                      {activeSuggestionsCount > 0 && (
+                        <Badge className="bg-amber-600 text-white hover:bg-amber-700">
+                          {activeSuggestionsCount}
+                        </Badge>
+                      )}
+                    </div>
                     <SuggestionForm onSuccess={refreshAll} />
                   </div>
-                ) : (
-                  <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
-                    {suggestions.map((s: any) => (
-                      <SuggestionCard
-                        key={s.id}
-                        suggestion={s}
-                        onUpdate={refreshAll}
-                      />
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        </section>
-
-        {/* Section Synthèse activité */}
-        <section className="space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-white shadow-sm border border-gray-200">
-              <TrendingUp className="h-5 w-5 text-green-600" />
+                </CardHeader>
+                <CardContent className="p-4">
+                  {suggestions.length === 0 ? (
+                    <div className="text-center py-8">
+                      <div className="text-gray-400 mb-2">💡</div>
+                      <p className="text-sm text-gray-500 mb-4">
+                        Aucune suggestion pour le moment
+                      </p>
+                      {/* ✅ c’est cette ligne qui cassait, corrigée */}
+                      <SuggestionForm onSuccess={refreshAll} />
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
+                      {suggestions.map((s) => (
+                        <SuggestionCard
+                          key={s.id}
+                          suggestion={s}
+                          onUpdate={refreshAll}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </div>
-            <h2 className="text-xl font-semibold text-gray-900">
-              Synthèse d&apos;Activité
-            </h2>
-          </div>
+          </CardContent>
+        </Card>
+      </section>
 
-          <div className="grid gap-6 lg:grid-cols-3">
-            {renderWeeklyColumn("-1", "Semaine dernière")}
-            {renderWeeklyColumn("0", "Semaine en cours")}
-            {renderWeeklyColumn("1", "Semaine prochaine")}
-          </div>
-        </section>
+      {/* SECTION 2 : SYNTHÈSE D'ACTIVITÉ */}
+      <section className="space-y-4">
+        <Card className="border border-gray-200 shadow-sm">
+          <CardHeader className="pb-3 bg-white border-b border-gray-100 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-white shadow-sm border border-gray-200">
+                  <TrendingUp className="h-5 w-5 text-green-600" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-900">
+                    Synthèse d&apos;activité
+                  </h2>
+                  <p className="text-xs text-gray-500">
+                    Vue hebdomadaire des actions de prospection
+                  </p>
+                </div>
+              </div>
+
+              {/* Navigation semaines pour la synthèse */}
+              <div className="flex items-center gap-2">
+                <div className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-600">
+                  <button
+                    type="button"
+                    onClick={() => setSummaryOffset((o) => o - 1)}
+                    className="p-1 rounded-full hover:bg-white"
+                  >
+                    <ChevronLeft className="h-3 w-3" />
+                  </button>
+                  <span className="mx-2 font-medium">
+                    Semaine centrale&nbsp;:{" "}
+                    {`Semaine ${weekMeta["0"].weekNumber}${
+                      weekMeta["0"].isCurrentWeek
+                        ? " – Semaine en cours"
+                        : ""
+                    }`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSummaryOffset((o) => o + 1)}
+                    className="p-1 rounded-full hover:bg.white"
+                  >
+                    <ChevronRight className="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent className="pt-4">
+            <div className="grid gap-6 lg:grid-cols-3">
+              {renderWeeklyColumn("-1", "Semaine dernière")}
+              {renderWeeklyColumn("0", "Semaine en cours")}
+              {renderWeeklyColumn("1", "Semaine prochaine")}
+            </div>
+          </CardContent>
+        </Card>
+      </section>
 
       <EstablishmentSheet
         establishmentId={selectedEstablishmentId}

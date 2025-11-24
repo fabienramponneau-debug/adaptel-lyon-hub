@@ -1,4 +1,6 @@
-import { useState } from "react";
+// src/components/SuggestionForm.tsx
+
+import { useState, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,6 +22,10 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import {
+  searchCitySuggestions,
+  CitySuggestion,
+} from "@/utils/geoApi";
 
 interface SuggestionFormProps {
   onSuccess: () => void;
@@ -29,6 +35,7 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+
   const [formData, setFormData] = useState({
     titre: "",
     ville: "",
@@ -40,6 +47,44 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
       | "info_commerciale",
     priorite: "normale" as "basse" | "normale" | "haute",
   });
+
+  // Auto-complétion ville
+  const [citySuggestions, setCitySuggestions] = useState<CitySuggestion[]>([]);
+  const [cityLoading, setCityLoading] = useState(false);
+  const cityTimeoutRef = useRef<number | null>(null);
+
+  const handleVilleChange = (value: string) => {
+    setFormData((prev) => ({ ...prev, ville: value }));
+
+    const trimmed = value.trim();
+    if (cityTimeoutRef.current) {
+      window.clearTimeout(cityTimeoutRef.current);
+    }
+    if (trimmed.length < 2) {
+      setCitySuggestions([]);
+      return;
+    }
+
+    cityTimeoutRef.current = window.setTimeout(async () => {
+      setCityLoading(true);
+      try {
+        const res = await searchCitySuggestions(trimmed);
+        setCitySuggestions(res);
+      } catch (e) {
+        // silencieux, pas grave pour l'UX
+      } finally {
+        setCityLoading(false);
+      }
+    }, 250);
+  };
+
+  const handleSelectCitySuggestion = (s: CitySuggestion) => {
+    setFormData((prev) => ({
+      ...prev,
+      ville: s.nom,
+    }));
+    setCitySuggestions([]);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -124,7 +169,10 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
               required
               value={formData.titre}
               onChange={(e) =>
-                setFormData({ ...formData, titre: e.target.value })
+                setFormData((prev) => ({
+                  ...prev,
+                  titre: e.target.value,
+                }))
               }
               placeholder="Nom de l'établissement"
             />
@@ -134,11 +182,31 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
             <Label>Ville (optionnel)</Label>
             <Input
               value={formData.ville}
-              onChange={(e) =>
-                setFormData({ ...formData, ville: e.target.value })
-              }
+              onChange={(e) => handleVilleChange(e.target.value)}
               placeholder="Ville"
             />
+            {cityLoading && (
+              <p className="text-[11px] text-slate-400 mt-1">
+                Recherche des communes...
+              </p>
+            )}
+            {!cityLoading && citySuggestions.length > 0 && (
+              <div className="mt-1 max-h-40 overflow-y-auto rounded-md border border-slate-200 bg-white shadow-sm text-xs">
+                {citySuggestions.map((s) => (
+                  <button
+                    key={`${s.nom}-${s.code_postal}`}
+                    type="button"
+                    onClick={() => handleSelectCitySuggestion(s)}
+                    className="w-full px-2 py-1 text-left hover:bg-blue-50 flex justify-between"
+                  >
+                    <span>{s.nom}</span>
+                    <span className="text-slate-500">
+                      {s.code_postal}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>
@@ -146,20 +214,25 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
             <Select
               value={formData.type}
               onValueChange={(value: any) =>
-                setFormData({ ...formData, type: value })
+                setFormData((prev) => ({ ...prev, type: value }))
               }
             >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="suggestion">Suggestion</SelectItem>
-                <SelectItem value="idee">Idée</SelectItem>
-                <SelectItem value="prospect_a_verifier">
-                  Prospect à vérifier
+                {/* valeurs techniques inchangées, libellés adaptés */}
+                <SelectItem value="suggestion">
+                  Suggestion
                 </SelectItem>
                 <SelectItem value="info_commerciale">
-                  Info commerciale
+                  Information
+                </SelectItem>
+                <SelectItem value="prospect_a_verifier">
+                  A contacter
+                </SelectItem>
+                <SelectItem value="idee">
+                  Etablissement à voir
                 </SelectItem>
               </SelectContent>
             </Select>
@@ -170,7 +243,7 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
             <Select
               value={formData.priorite}
               onValueChange={(value: any) =>
-                setFormData({ ...formData, priorite: value })
+                setFormData((prev) => ({ ...prev, priorite: value }))
               }
             >
               <SelectTrigger>
@@ -189,10 +262,10 @@ export function SuggestionForm({ onSuccess }: SuggestionFormProps) {
             <Textarea
               value={formData.description}
               onChange={(e) =>
-                setFormData({
-                  ...formData,
+                setFormData((prev) => ({
+                  ...prev,
                   description: e.target.value,
-                })
+                }))
               }
               placeholder="Commentaire / contexte..."
               rows={4}
