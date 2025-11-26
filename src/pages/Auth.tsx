@@ -38,7 +38,9 @@ const Auth = () => {
         });
         if (error) throw error;
         toast.success("Connexion réussie");
-        navigate("/");
+        // FIX: Remplacement de navigate("/") par window.location.href = "/" pour forcer le rechargement
+        // et garantir l'initialisation de la session sur la page de destination.
+        window.location.href = "/";
       }
     } catch (error: any) {
       toast.error(error.message || "Une erreur est survenue");

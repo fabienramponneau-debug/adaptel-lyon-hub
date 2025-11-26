@@ -52,26 +52,30 @@ interface PotentialOption {
 }
 
 const POTENTIAL_OPTIONS: PotentialOption[] = [
+  // CORRECTION: Mappage de "Aucun" au code DB "nul"
   {
-    value: "Aucun",
+    value: "nul", // Anciennement "Aucun"
     label: "Aucun",
     icon: <XCircle className="h-4 w-4 text-slate-500" />,
     colorClass: "bg-slate-100 text-slate-700 border-slate-300",
   },
+  // CORRECTION: Mappage de "Faible" au code DB "possible"
   {
-    value: "Faible",
+    value: "possible", // Anciennement "Faible"
     label: "Faible",
     icon: <ArrowDownRight className="h-4 w-4 text-yellow-600" />,
     colorClass: "bg-yellow-100 text-yellow-800 border-yellow-300",
   },
+  // CORRECTION: Mappage de "Moyen" au code DB "interessé"
   {
-    value: "Moyen",
+    value: "interessé", // Anciennement "Moyen"
     label: "Moyen",
     icon: <ArrowRight className="h-4 w-4 text-sky-600" />,
     colorClass: "bg-sky-100 text-sky-800 border-sky-300",
   },
+  // CORRECTION: Mappage de "Fort" au code DB "fort" (en s'assurant que la casse correspond à la DB)
   {
-    value: "Fort",
+    value: "fort", // Anciennement "Fort"
     label: "Fort",
     icon: <CheckCircle className="h-4 w-4 text-green-600" />,
     colorClass: "bg-green-100 text-green-800 border-green-300",
@@ -1015,7 +1019,7 @@ export const EstablishmentSheet = ({
                       >
                         {currentPotentialOption.icon}
                         <span className="font-medium">
-                          {currentPotentialOption.value}
+                          {currentPotentialOption.label}
                         </span>
                       </div>
                     )}
