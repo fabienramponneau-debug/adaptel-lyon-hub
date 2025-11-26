@@ -958,7 +958,7 @@ export const EstablishmentSheet = ({
                       </Select>
                     </div>
                     <div>
-                      <label className="text_sm font-medium text-slate-700">
+                      <label className="text-sm font-medium text-slate-700">
                         Secteur
                       </label>
                       <Select
