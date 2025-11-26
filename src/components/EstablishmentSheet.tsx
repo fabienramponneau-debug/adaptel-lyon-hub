@@ -52,30 +52,27 @@ interface PotentialOption {
 }
 
 const POTENTIAL_OPTIONS: PotentialOption[] = [
-  // CORRECTION: Mappage de "Aucun" au code DB "nul"
+  // FIX: Correction des valeurs pour correspondre à Supabase (la notation)
   {
-    value: "nul", // Anciennement "Aucun"
+    value: "nul", 
     label: "Aucun",
     icon: <XCircle className="h-4 w-4 text-slate-500" />,
     colorClass: "bg-slate-100 text-slate-700 border-slate-300",
   },
-  // CORRECTION: Mappage de "Faible" au code DB "possible"
   {
-    value: "possible", // Anciennement "Faible"
+    value: "possible", 
     label: "Faible",
     icon: <ArrowDownRight className="h-4 w-4 text-yellow-600" />,
     colorClass: "bg-yellow-100 text-yellow-800 border-yellow-300",
   },
-  // CORRECTION: Mappage de "Moyen" au code DB "interessé"
   {
-    value: "interessé", // Anciennement "Moyen"
+    value: "interessé", 
     label: "Moyen",
     icon: <ArrowRight className="h-4 w-4 text-sky-600" />,
     colorClass: "bg-sky-100 text-sky-800 border-sky-300",
   },
-  // CORRECTION: Mappage de "Fort" au code DB "fort" (en s'assurant que la casse correspond à la DB)
   {
-    value: "fort", // Anciennement "Fort"
+    value: "fort", 
     label: "Fort",
     icon: <CheckCircle className="h-4 w-4 text-green-600" />,
     colorClass: "bg-green-100 text-green-800 border-green-300",
@@ -107,6 +104,11 @@ const formatDateTime = (value?: string | null) => {
   });
 };
 
+// Format date YYYY-MM-DD
+const formatDateToISO = (date: Date): string => {
+    return date.toISOString().split("T")[0];
+};
+
 export const EstablishmentSheet = ({
   establishmentId,
   open,
@@ -117,6 +119,8 @@ export const EstablishmentSheet = ({
   const [contacts, setContacts] = useState<any[]>([]);
   const [actions, setActions] = useState<any[]>([]);
   const [params, setParams] = useState<any[]>([]);
+  // NOUVEAU: État pour stocker la liste des commerciaux actifs
+  const [commercials, setCommercials] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState<"idle" | "saving">("idle");
   const [externalEditActionId, setExternalEditActionId] =
@@ -137,15 +141,52 @@ export const EstablishmentSheet = ({
   const [duplicateMatches, setDuplicateMatches] = useState<
     { id: string; nom: string; ville: string | null }[]
   >([]);
+    
+  // NOUVEAU: Fonction de récupération des profils actifs (Commercials)
+  async function fetchActiveProfiles() {
+    const { data: profiles, error } = await supabase
+      .from("profiles")
+      .select("id, prenom, nom, actif")
+      .eq("actif", true)
+      .order("prenom", { ascending: true });
 
-  // Chargement des parametrages seul (pour la création)
+    if (error) {
+      console.error("Erreur chargement profils actifs:", error);
+      return [];
+    }
+
+    const opts = profiles.map((p: any) => ({
+      id: p.id,
+      label: `${p.prenom ?? ""} ${p.nom ?? ""}`.trim() || "Utilisateur",
+    }));
+
+    // Utilisateur courant
+    const { data: userData } = await supabase.auth.getUser();
+    const currentUserId = userData.user?.id;
+
+    // S'assurer que l'utilisateur actuel est en tête s'il est présent
+    const currentUserProfile = opts.find(p => p.id === currentUserId);
+    
+    if (currentUserProfile) {
+        const filteredOpts = opts.filter(p => p.id !== currentUserId);
+        return [currentUserProfile, ...filteredOpts];
+    }
+
+    return opts;
+  }
+
+  // Chargement des parametrages et profils seul (pour la création)
   async function fetchParamsOnly() {
-    const { data: p } = await supabase
-      .from("parametrages")
-      .select("*")
-      .order("valeur", { ascending: true });
+    const [{ data: p }, activeProfiles] = await Promise.all([
+        supabase
+          .from("parametrages")
+          .select("*")
+          .order("valeur", { ascending: true }),
+        fetchActiveProfiles(),
+    ]);
 
     setParams(p || []);
+    setCommercials(activeProfiles); // NOUVEAU: Stockage des commerciaux
     setLoading(false);
   }
 
@@ -178,7 +219,13 @@ export const EstablishmentSheet = ({
     if (!establishmentId) return;
     setLoading(true);
 
-    const [{ data: est }, { data: c }, { data: a }] = await Promise.all([
+    const [
+        { data: est }, 
+        { data: c }, 
+        { data: a }, 
+        { data: p }, 
+        activeProfiles
+    ] = await Promise.all([
       supabase
         .from("establishments")
         .select(
@@ -187,7 +234,8 @@ export const EstablishmentSheet = ({
            secteur:secteur_id(valeur),
            activite:activite_id(valeur),
            concurrent:concurrent_id(valeur),
-           commercial:commercial_id(nom, prenom)`
+           commercial:commercial_id(nom, prenom),
+           triggered_by:client_triggered_by(nom, prenom)` // NOUVEAU: Récupération du commercial déclencheur (triggered_by)
         )
         .eq("id", establishmentId)
         .single(),
@@ -201,12 +249,13 @@ export const EstablishmentSheet = ({
         .select(`*, user:user_id(nom, prenom)`)
         .eq("etablissement_id", establishmentId)
         .order("date_action", { ascending: false }),
+      supabase
+        .from("parametrages")
+        .select("*")
+        .order("valeur", { ascending: true }),
+      fetchActiveProfiles()
     ]);
 
-    const { data: p } = await supabase
-      .from("parametrages")
-      .select("*")
-      .order("valeur", { ascending: true });
 
     const { data: compHist } = await supabase
       .from("competitors_history")
@@ -228,6 +277,7 @@ export const EstablishmentSheet = ({
     setContacts(c || []);
     setActions(a || []);
     setParams(p || []);
+    setCommercials(activeProfiles); // NOUVEAU: Stockage des commerciaux
     setLoading(false);
 
     // Charge les autres établissements pour la détection de doublons
@@ -268,6 +318,9 @@ export const EstablishmentSheet = ({
           coefficient_concurrent: "",
           latitude: null,
           longitude: null,
+          commercial_id: null, // S'assure que le champ créateur existe
+          client_triggered_by: null, // NOUVEAU: Ajout du champ déclencheur
+          client_triggered_at: null, // NOUVEAU: Ajout du champ date déclencheur
         });
         setContacts([]);
         setActions([]);
@@ -280,6 +333,7 @@ export const EstablishmentSheet = ({
       setContacts([]);
       setActions([]);
       setParams([]);
+      setCommercials([]); // NOUVEAU: Réinitialisation
       setCitySuggestions([]);
       setAllEstablishments([]);
       setDuplicateMatches([]);
@@ -319,6 +373,31 @@ export const EstablishmentSheet = ({
         setSaving("saving");
 
         const full: any = { ...payload };
+
+        // NOUVEAU: Logique d'attribution du commercial et de date
+        if (Object.prototype.hasOwnProperty.call(full, "client_triggered_by")) {
+            const newCommercialId = full.client_triggered_by === "none" ? null : full.client_triggered_by;
+            const currentCommercialId = model.client_triggered_by;
+
+            // Logique 1: Si un commercial est sélectionné pour la première fois ET que la date est vide, fixe la date.
+            if (newCommercialId && model.client_triggered_at === null) {
+                full.client_triggered_at = formatDateToISO(new Date());
+            } 
+            // Logique 2: Si on met 'Non renseigné' ou si le statut n'est plus "client", on met les deux champs à null en base.
+            else if (newCommercialId === null || model.statut !== "client") { 
+                 full.client_triggered_by = null;
+                 full.client_triggered_at = null; 
+            }
+            
+            // Mettre à jour l'ID du commercial
+            full.client_triggered_by = newCommercialId;
+        } 
+        // Logique pour effacer l'attribution si le statut est changé vers Prospect ou Ancien client
+        else if (Object.prototype.hasOwnProperty.call(full, "statut") && full.statut !== "client") {
+            full.client_triggered_by = null;
+            full.client_triggered_at = null;
+        }
+
 
         // --- GÉOCODAGE SI ADRESSE / CP / VILLE MODIFIÉS
         //     OU SI PAS ENCORE DE COORDONNÉES EN BASE ---
@@ -577,6 +656,13 @@ export const EstablishmentSheet = ({
         model.code_postal || null,
         model.ville || null
       );
+      
+      const userId = user.id;
+
+      // Logique de déclenchement à la création
+      const clientTriggeredBy = (model.statut === 'client' && model.client_triggered_by !== 'none') ? model.client_triggered_by : null;
+      const clientTriggeredAt = (model.statut === 'client' && clientTriggeredBy !== null) ? formatDateToISO(new Date()) : null;
+
 
       const payload: any = {
         nom: model.nom.trim(),
@@ -591,7 +677,9 @@ export const EstablishmentSheet = ({
         commentaire: model.commentaire || null,
         concurrent_id: model.concurrent_id || null,
         info_concurrent: model.info_concurrent || null,
-        commercial_id: user.id, // 🔐 toujours renseigné
+        commercial_id: userId, // 🔐 Commercial qui a créé l'établissement
+        client_triggered_by: clientTriggeredBy, // NOUVEAU
+        client_triggered_at: clientTriggeredAt, // NOUVEAU: Date auto si client et attribué
         latitude: coords ? coords.latitude : null,
         longitude: coords ? coords.longitude : null,
       };
@@ -650,6 +738,15 @@ export const EstablishmentSheet = ({
         }`.trim()
       : null;
 
+  // Récupère le nom du commercial déclencheur (si non null)
+  const triggeredByName =
+    model?.triggered_by &&
+    (model.triggered_by.prenom || model.triggered_by.nom)
+      ? `${model.triggered_by.prenom ?? ""} ${
+          model.triggered_by.nom ?? ""
+        }`.trim()
+      : null;
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end pointer-events-none">
       {/* Overlay clicable derrière la fiche */}
@@ -667,7 +764,7 @@ export const EstablishmentSheet = ({
         />
 
         {/* Bandeau infos "Créé / Modifié" */}
-        {model && (createdAtLabel || updatedAtLabel) && (
+        {model && (createdAtLabel || updatedAtLabel || triggeredByName || model.client_triggered_at) && (
           <div className="px-6 pt-3 pb-2 border-b border-slate-100 text-xs text-slate-500 flex flex-wrap gap-x-6 gap-y-1">
             {createdAtLabel && (
               <div>
@@ -687,6 +784,18 @@ export const EstablishmentSheet = ({
                 <span className="font-medium">Modifié le</span>{" "}
                 {updatedAtLabel}
               </div>
+            )}
+            {/* NOUVEAU: Affichage du commercial déclencheur */}
+            {model.statut === "client" && (triggeredByName || model.client_triggered_at) && (
+                <div>
+                    <span className="font-medium">Déclenché client :</span>
+                    {triggeredByName && (
+                        <span className="ml-1 font-medium">{triggeredByName}</span>
+                    )}
+                    {model.client_triggered_at && (
+                        <span className="ml-1">le {new Date(model.client_triggered_at).toLocaleDateString('fr-FR')}</span>
+                    )}
+                </div>
             )}
           </div>
         )}
@@ -731,6 +840,35 @@ export const EstablishmentSheet = ({
                         </SelectContent>
                       </Select>
                     </div>
+                    
+                    {/* NOUVEAU: Commercial déclencheur (uniquement si statut est 'Client') */}
+                    {model.statut === "client" && (
+                      <div className="col-span-2">
+                        <label className="text-sm font-medium text-slate-700">
+                          Commercial déclencheur (pour reporting)
+                        </label>
+                        <Select
+                          value={model.client_triggered_by || "none"}
+                          onValueChange={(v) =>
+                            onChange({
+                              client_triggered_by: v === "none" ? null : v,
+                            })
+                          }
+                        >
+                          <SelectTrigger className="mt-1">
+                            <SelectValue placeholder="Non renseigné" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Non renseigné</SelectItem>
+                            {commercials.map((c: any) => (
+                              <SelectItem key={c.id} value={c.id}>
+                                {c.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
 
                     {/* Nom + alerte doublons */}
                     <div className="col-span-2">
