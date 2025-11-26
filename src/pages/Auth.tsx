@@ -38,8 +38,8 @@ const Auth = () => {
         });
         if (error) throw error;
         toast.success("Connexion réussie");
-        // FIX: Remplacement de navigate("/") par window.location.href = "/" pour forcer le rechargement
-        // et garantir l'initialisation de la session sur la page de destination.
+        // FIX CRITIQUE: Force un rechargement complet pour contourner la race condition
+        // et garantir que UserViewContext.tsx recharge la session Supabase.
         window.location.href = "/";
       }
     } catch (error: any) {
