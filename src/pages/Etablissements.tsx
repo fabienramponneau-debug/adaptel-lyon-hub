@@ -522,13 +522,7 @@ export default function Etablissements() {
             <Plus className="h-4 w-4" />
             <span>Nouvel établissement</span>
           </Button>
-          <Button
-            variant="outline"
-            className="gap-2 border-gray-300 bg-white hover:bg-gray-50 shadow-sm h-9"
-          >
-            <Download className="h-4 w-4" />
-            <span>Exporter</span>
-          </Button>
+          {/* SUPPRESSION du bouton Exporter */}
         </div>
       </div>
 

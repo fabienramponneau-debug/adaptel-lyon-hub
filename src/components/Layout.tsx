@@ -19,7 +19,7 @@ interface LayoutProps {
 const navItems = [
   { label: "Dashboard", path: "/" },
   { label: "Portefeuille", path: "/etablissements" },
-  { label: "Carte", path: "/map" },      // ← ajouté
+  { label: "Carte", path: "/map" },      
   { label: "Prospection", path: "/prospection" },
   { label: "Reporting", path: "/reporting" },
   { label: "Paramétrage", path: "/parametrage" },
@@ -30,7 +30,7 @@ export const Layout = ({ children }: LayoutProps) => {
   const {
     currentUserId,
     currentRole,
-    profile,
+    profile, // Utilisé pour afficher le nom/prénom
     loadingUserView,
     selectedUserId,
     setSelectedUserId,
@@ -43,6 +43,7 @@ export const Layout = ({ children }: LayoutProps) => {
 
   if (loadingUserView || !currentUserId) return null;
 
+  // Logique pour afficher le nom et l'initiale du profil
   const displayName =
     profile
       ? `${profile.prenom ?? ""} ${profile.nom ?? ""}`.trim() ||
@@ -54,8 +55,10 @@ export const Layout = ({ children }: LayoutProps) => {
     profile?.email?.charAt(0)?.toUpperCase() ??
     "U";
 
+  // FIX Déconnexion : Redirection forcée vers /auth après la déconnexion
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    window.location.href = "/auth";
   };
 
   const renderAdminUserSelector = () => {
@@ -84,8 +87,8 @@ export const Layout = ({ children }: LayoutProps) => {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
-      {/* Header */}
-      <header className="sticky top-0 z-50 h-16 bg-white border-b border-slate-200 shadow-sm">
+      {/* Header FIXÉ : utilise 'fixed' et z-50 pour rester visible */}
+      <header className="fixed top-0 left-0 right-0 z-50 h-16 bg-white border-b border-slate-200 shadow-sm">
         <div className="w-full h-full px-6 lg:px-8 flex items-center justify-between">
 
           {/* Logo */}
@@ -122,6 +125,12 @@ export const Layout = ({ children }: LayoutProps) => {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-2 rounded-lg p-1.5 hover:bg-slate-100">
+                  
+                  {/* AFFICHAGE NOM/PRENOM DE L'UTILISATEUR CONNECTÉ */}
+                  <span className="hidden sm:inline text-sm font-medium text-slate-800">
+                    {displayName}
+                  </span>
+
                   <Avatar className="h-8 w-8">
                     <AvatarFallback className="bg-[#840404] text-white">
                       {initial}
@@ -145,6 +154,9 @@ export const Layout = ({ children }: LayoutProps) => {
 
         </div>
       </header>
+      
+      {/* COMPENSATION : Espace vide pour décaler le contenu de la hauteur du header fixe (h-16) */}
+      <div className="h-16 w-full" />
 
       {/* Contenu */}
       <main className="flex-1 w-full px-6 lg:px-8 py-6">{children}</main>
