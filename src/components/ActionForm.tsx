@@ -76,7 +76,7 @@ export function ActionForm({
     prefilledDate || new Date().toISOString().slice(0, 10)
   );
   const [commentaire, setCommentaire] = useState("");
-  const [contactVu, setContactVu] = useState(""); // Personne vue pour visite / rdv
+  const [contactVu, setContactVu] = useState(""); // Personne vue pour visite / rdv (facultatif)
 
   // --- Création rapide établissement (dans le popup d'action) ---
 
@@ -94,6 +94,11 @@ export function ActionForm({
   const [citySuggestions, setCitySuggestions] = useState<CitySuggestion[]>([]);
   const [showCitySuggestions, setShowCitySuggestions] = useState(false);
   const lastCityQueryRef = useRef<string>("");
+
+  // Détection live doublon établissement
+  const [duplicateEstab, setDuplicateEstab] =
+    useState<EstablishmentOption | null>(null);
+  const duplicateCheckTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -115,6 +120,7 @@ export function ActionForm({
       setNewEstabPostal("");
       setCitySuggestions([]);
       setShowCitySuggestions(false);
+      setDuplicateEstab(null);
     }
   }, [open, prefilledDate, establishmentId]);
 
@@ -131,7 +137,9 @@ export function ActionForm({
 
   // --- Appel direct à l'API Gouv pour CP / Ville (local) ---
 
-  const fetchCitiesFromGeoApi = async (query: string): Promise<CitySuggestion[]> => {
+  const fetchCitiesFromGeoApi = async (
+    query: string
+  ): Promise<CitySuggestion[]> => {
     const q = query.trim();
     if (!q || q.length < 2) return [];
 
@@ -196,6 +204,44 @@ export function ActionForm({
     }
   };
 
+  // --- Détection live de doublon sur le nom (création rapide) ---
+
+  useEffect(() => {
+    if (!creatingEstab) {
+      setDuplicateEstab(null);
+      return;
+    }
+
+    const value = newEstabNom.trim();
+    if (!value || value.length < 3) {
+      setDuplicateEstab(null);
+      return;
+    }
+
+    if (duplicateCheckTimeoutRef.current) {
+      window.clearTimeout(duplicateCheckTimeoutRef.current);
+    }
+
+    duplicateCheckTimeoutRef.current = window.setTimeout(async () => {
+      const { data, error } = await supabase
+        .from("establishments")
+        .select("id, nom, ville")
+        .ilike("nom", `${value}%`)
+        .limit(1)
+        .maybeSingle();
+
+      if (!error && data) {
+        setDuplicateEstab({
+          id: data.id,
+          nom: data.nom,
+          ville: data.ville,
+        });
+      } else {
+        setDuplicateEstab(null);
+      }
+    }, 400);
+  }, [newEstabNom, creatingEstab]);
+
   const handleCreateEstablishment = async () => {
     if (!newEstabNom.trim()) {
       toast({
@@ -207,6 +253,32 @@ export function ActionForm({
     }
 
     setCreatingEstabLoading(true);
+
+    // Anti-doublon à la validation : même nom déjà existant
+    const { data: existing, error: existingError } = await supabase
+      .from("establishments")
+      .select("id, nom, ville, code_postal")
+      .ilike("nom", newEstabNom.trim())
+      .maybeSingle();
+
+    if (!existingError && existing) {
+      setSelectedEstabId(existing.id);
+      setCreatingEstab(false);
+      setCreatingEstabLoading(false);
+      setNewEstabNom("");
+      setNewEstabVille("");
+      setNewEstabPostal("");
+      setCitySuggestions([]);
+      setShowCitySuggestions(false);
+      setDuplicateEstab(null);
+
+      toast({
+        title: "Établissement déjà existant",
+        description:
+          "L'établissement existe déjà, il a été sélectionné dans la liste.",
+      });
+      return;
+    }
 
     const {
       data: { user },
@@ -250,6 +322,7 @@ export function ActionForm({
     setNewEstabPostal("");
     setCitySuggestions([]);
     setShowCitySuggestions(false);
+    setDuplicateEstab(null);
 
     toast({
       title: "Établissement créé",
@@ -276,17 +349,7 @@ export function ActionForm({
       return;
     }
 
-    // Vérification de la personne vue si visite / rdv
-    if ((type === "visite" || type === "rdv") && !contactVu.trim()) {
-      toast({
-        variant: "destructive",
-        title: "Personne vue obligatoire",
-        description:
-          "Pour une Visite ou un RDV, la personne rencontrée est obligatoire.",
-      });
-      return;
-    }
-
+    // Personne vue maintenant FACULTATIVE (on ne bloque plus)
     setLoading(true);
 
     const {
@@ -427,6 +490,18 @@ export function ActionForm({
                       onChange={(e) => setNewEstabNom(e.target.value)}
                       placeholder="Nom établissement"
                     />
+                    {duplicateEstab && (
+                      <p className="mt-1 text-[11px] text-amber-600">
+                        Un établissement existe déjà :{" "}
+                        <span className="font-semibold">
+                          {duplicateEstab.nom}
+                          {duplicateEstab.ville
+                            ? ` (${duplicateEstab.ville})`
+                            : ""}
+                        </span>
+                        . Vous pouvez le sélectionner dans la liste au-dessus.
+                      </p>
+                    )}
                   </div>
 
                   <div>
@@ -439,7 +514,7 @@ export function ActionForm({
                       onChange={async (e) => {
                         const v = e.target.value;
                         setNewEstabPostal(v);
-                        await handleCitySearch(v);
+                        await handleCitySearch(v); // ✅ FIX ICI
                       }}
                       placeholder="Ex : 69003"
                     />
@@ -520,6 +595,7 @@ export function ActionForm({
                       setNewEstabPostal("");
                       setCitySuggestions([]);
                       setShowCitySuggestions(false);
+                      setDuplicateEstab(null);
                     }}
                   >
                     Annuler
@@ -566,11 +642,12 @@ export function ActionForm({
             </div>
           </div>
 
-          {/* Personne vue pour visite / RDV */}
+          {/* Personne vue pour visite / RDV (facultatif) */}
           {(type === "visite" || type === "rdv") && (
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700">
-                Personne rencontrée / vue
+                Personne rencontrée / vue{" "}
+                <span className="text-xs text-slate-400">(facultatif)</span>
               </label>
               <Input
                 value={contactVu}
