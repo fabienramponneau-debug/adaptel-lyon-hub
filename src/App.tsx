@@ -14,6 +14,7 @@ import Reporting from "./pages/Reporting";
 import Parametrage from "./pages/Parametrage";
 import NotFound from "./pages/NotFound";
 import MapPage from "./pages/Map"; // ✅ NOUVEAU : import de la carte
+import ExpenseReports from "./pages/ExpenseReports";
 
 // Import du Provider
 import { UserViewProvider } from "./contexts/UserViewContext";
@@ -67,6 +68,14 @@ const App = () => (
               element={
                 <Layout>
                   <Parametrage />
+                </Layout>
+              }
+            />
+            <Route
+              path="/notes-de-frais"
+              element={
+                <Layout>
+                  <ExpenseReports />
                 </Layout>
               }
             />

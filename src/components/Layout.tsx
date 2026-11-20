@@ -22,6 +22,7 @@ const navItems = [
   { label: "Carte", path: "/map" },      
   { label: "Prospection", path: "/prospection" },
   { label: "Reporting", path: "/reporting" },
+  { label: "Notes de frais", path: "/notes-de-frais" },
   { label: "Paramétrage", path: "/parametrage" },
 ];
 

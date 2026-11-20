@@ -321,18 +321,15 @@ Deno.serve(async (request) => {
       if (establishmentsError) throw establishmentsError;
       const establishmentIds = (establishments ?? []).map((item) => item.id);
       const lastActionByEstablishment = new Map<string, string>();
-      for (let offset = 0; offset < establishmentIds.length; offset += 500) {
-        const ids = establishmentIds.slice(offset, offset + 500);
+      for (let offset = 0; offset < establishmentIds.length; offset += 1000) {
+        const ids = establishmentIds.slice(offset, offset + 1000);
         if (ids.length === 0) continue;
-        const { data: actions, error: actionsError } = await admin
-          .from("actions")
-          .select("etablissement_id, date_action")
-          .in("etablissement_id", ids)
-          .order("date_action", { ascending: false })
-          .range(0, 4999);
+        const { data: actions, error: actionsError } = await admin.rpc("crm_last_action_dates", {
+          p_establishment_ids: ids,
+        });
         if (actionsError) throw actionsError;
         for (const action of actions ?? []) {
-          if (!lastActionByEstablishment.has(action.etablissement_id)) lastActionByEstablishment.set(action.etablissement_id, action.date_action);
+          lastActionByEstablishment.set(action.establishment_id, action.last_action_date);
         }
       }
       return await respond({
@@ -485,6 +482,181 @@ Deno.serve(async (request) => {
         }
       }
       return await respond({ changes });
+    }
+
+    if (operation === "list_expense_periods") {
+      const userId = clean(body?.userId);
+      const fromPeriod = clean(body?.fromPeriod) || `${new Date().getUTCFullYear()}-01`;
+      const toPeriod = clean(body?.toPeriod) || `${new Date().getUTCFullYear()}-12`;
+      if (!validPeriod(fromPeriod) || !validPeriod(toPeriod) || fromPeriod > toPeriod) {
+        return await respond({ error: "Période invalide." }, 400);
+      }
+      if (userId && userId !== "tous" && !validUuid(userId)) {
+        return await respond({ error: "Commercial invalide." }, 400);
+      }
+      let periodsQuery = admin
+        .from("expense_periods")
+        .select("id, user_id, period_code, status, mileage_km_snapshot, mileage_amount_snapshot, submitted_at, correction_reason, validated_at, closed_at, payroll_reference, created_at, updated_at")
+        .gte("period_code", fromPeriod)
+        .lte("period_code", toPeriod)
+        .order("period_code", { ascending: false });
+      if (userId && userId !== "tous") periodsQuery = periodsQuery.eq("user_id", userId);
+      const { data: periods, error: periodsError } = await periodsQuery;
+      if (periodsError) throw periodsError;
+      const periodIds = (periods ?? []).map((period) => period.id);
+      const profileIds = [...new Set((periods ?? []).map((period) => period.user_id))];
+      const [{ data: items, error: itemsError }, { data: trips, error: tripsError }, { data: adjustments, error: adjustmentsError }, { data: profiles, error: profilesError }] = await Promise.all([
+        periodIds.length ? admin.from("expense_items").select("period_id, amount, category_id, expense_categories(code, label, is_meal)").in("period_id", periodIds) : Promise.resolve({ data: [], error: null }),
+        periodIds.length ? admin.from("expense_trips").select("period_id, total_km").in("period_id", periodIds) : Promise.resolve({ data: [], error: null }),
+        periodIds.length ? admin.from("expense_adjustments").select("period_id, amount_delta, kilometers_delta").in("period_id", periodIds) : Promise.resolve({ data: [], error: null }),
+        profileIds.length ? admin.from("profiles").select("id, prenom, nom").in("id", profileIds) : Promise.resolve({ data: [], error: null }),
+      ]);
+      if (itemsError || tripsError || adjustmentsError || profilesError) throw itemsError ?? tripsError ?? adjustmentsError ?? profilesError;
+      const profileById = new Map((profiles ?? []).map((profile) => [profile.id, [profile.prenom, profile.nom].filter(Boolean).join(" ")]));
+      return await respond({
+        periods: (periods ?? []).map((period) => {
+          const periodItems = (items ?? []).filter((item) => item.period_id === period.id);
+          const expensesAmount = periodItems.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+          const mealsAmount = periodItems.filter((item) => item.expense_categories?.is_meal).reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+          const expenseBreakdown = Object.values(periodItems.reduce((acc, item) => {
+            const code = item.expense_categories?.code ?? "other";
+            if (!acc[code]) acc[code] = { code, label: item.expense_categories?.label ?? "Autres", amount: 0 };
+            acc[code].amount += Number(item.amount ?? 0);
+            return acc;
+          }, {}));
+          const periodAdjustments = (adjustments ?? []).filter((item) => item.period_id === period.id);
+          const adjustmentAmount = periodAdjustments.reduce((sum, item) => sum + Number(item.amount_delta ?? 0), 0);
+          const adjustmentKilometers = periodAdjustments.reduce((sum, item) => sum + Number(item.kilometers_delta ?? 0), 0);
+          const declaredKilometers = (trips ?? []).filter((trip) => trip.period_id === period.id).reduce((sum, trip) => sum + Number(trip.total_km ?? 0), 0);
+          return {
+            id: period.id,
+            userId: period.user_id,
+            commercialName: profileById.get(period.user_id) ?? null,
+            periodCode: period.period_code,
+            status: period.status,
+            declaredKilometers: declaredKilometers + adjustmentKilometers,
+            reimbursableKilometers: Number(period.mileage_km_snapshot ?? 0) + adjustmentKilometers,
+            mileageAmount: Number(period.mileage_amount_snapshot ?? 0),
+            expensesAmount,
+            mealsAmount,
+            expenseBreakdown,
+            adjustmentAmount,
+            adjustmentKilometers,
+            totalReimbursement: Number(period.mileage_amount_snapshot ?? 0) + expensesAmount + adjustmentAmount,
+            submittedAt: period.submitted_at,
+            correctionReason: period.correction_reason,
+            validatedAt: period.validated_at,
+            closedAt: period.closed_at,
+            payrollReference: period.payroll_reference,
+            updatedAt: period.updated_at,
+          };
+        }),
+      });
+    }
+
+    if (operation === "get_expense_period") {
+      const periodId = clean(body?.periodId);
+      if (!validUuid(periodId)) return await respond({ error: "Période de frais invalide." }, 400);
+      const { data: period, error: periodError } = await admin
+        .from("expense_periods")
+        .select("*")
+        .eq("id", periodId)
+        .maybeSingle();
+      if (periodError) throw periodError;
+      if (!period) return await respond({ error: "Période introuvable." }, 404);
+      const [{ data: trips, error: tripsError }, { data: items, error: itemsError }, { data: history, error: historyError }, { data: adjustments, error: adjustmentsError }] = await Promise.all([
+        admin.from("expense_trips").select("*, expense_trip_legs(*), expense_trip_actions(action_id)").eq("period_id", periodId).order("travel_date"),
+        admin.from("expense_items").select("*, expense_categories(code, label, is_meal)").eq("period_id", periodId).order("expense_date"),
+        admin.from("expense_period_history").select("*").eq("period_id", periodId).order("created_at", { ascending: false }),
+        admin.from("expense_adjustments").select("*").eq("period_id", periodId).order("created_at", { ascending: false }),
+      ]);
+      if (tripsError || itemsError || historyError || adjustmentsError) throw tripsError ?? itemsError ?? historyError ?? adjustmentsError;
+      return await respond({ period, trips: trips ?? [], expenses: items ?? [], history: history ?? [], adjustments: adjustments ?? [] });
+    }
+
+    if (operation === "get_expense_receipt_url") {
+      const expenseItemId = clean(body?.expenseItemId);
+      if (!validUuid(expenseItemId)) return await respond({ error: "Dépense invalide." }, 400);
+      const { data: item, error: itemError } = await admin
+        .from("expense_items")
+        .select("id, receipt_path, receipt_name")
+        .eq("id", expenseItemId)
+        .maybeSingle();
+      if (itemError) throw itemError;
+      if (!item?.receipt_path) return await respond({ error: "Aucun justificatif." }, 404);
+      const { data: signed, error: signedError } = await admin.storage.from("expense-receipts").createSignedUrl(item.receipt_path, 300);
+      if (signedError) throw signedError;
+      return await respond({ url: signed.signedUrl, expiresIn: 300, fileName: item.receipt_name });
+    }
+
+    if (operation === "review_expense_period") {
+      const periodId = clean(body?.periodId);
+      const action = clean(body?.action);
+      const reason = clean(body?.reason) || null;
+      const payrollReference = clean(body?.payrollReference) || null;
+      if (!validUuid(periodId) || !["request_correction", "validate", "close"].includes(action)) {
+        return await respond({ error: "Décision invalide." }, 400);
+      }
+      if (action === "request_correction" && !reason) return await respond({ error: "Le motif de correction est obligatoire." }, 400);
+      if (action === "close" && !payrollReference) return await respond({ error: "La référence de paie est obligatoire." }, 400);
+      const { data: period, error: periodError } = await admin.from("expense_periods").select("id, status").eq("id", periodId).maybeSingle();
+      if (periodError) throw periodError;
+      if (!period) return await respond({ error: "Période introuvable." }, 404);
+      const expectedStatus = action === "close" ? "validated" : "submitted";
+      if (period.status !== expectedStatus) return await respond({ error: `La période doit être au statut ${expectedStatus}.` }, 409);
+      const nextStatus = action === "request_correction" ? "correction_required" : action === "validate" ? "validated" : "closed";
+      const updatePayload: Record<string, unknown> = { status: nextStatus };
+      if (reason) updatePayload.correction_reason = reason;
+      if (payrollReference) updatePayload.payroll_reference = payrollReference;
+      const { error: updateError } = await admin.from("expense_periods").update(updatePayload).eq("id", periodId);
+      if (updateError) throw updateError;
+      const { data: latestHistory } = await admin
+        .from("expense_period_history")
+        .select("id")
+        .eq("period_id", periodId)
+        .eq("to_status", nextStatus)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (latestHistory?.id) {
+        await admin.from("expense_period_history").update({ actor_source: "app_agence", reason }).eq("id", latestHistory.id);
+      }
+      return await respond({ ok: true, status: nextStatus });
+    }
+
+    if (operation === "add_expense_adjustment") {
+      const periodId = clean(body?.periodId);
+      const expenseItemId = clean(body?.expenseItemId) || null;
+      const tripId = clean(body?.tripId) || null;
+      const reason = clean(body?.reason);
+      const amountDelta = numberOrNull(body?.amountDelta) ?? 0;
+      const kilometersDelta = numberOrNull(body?.kilometersDelta) ?? 0;
+      if (!validUuid(periodId) || (expenseItemId && !validUuid(expenseItemId)) || (tripId && !validUuid(tripId))) {
+        return await respond({ error: "Référence de correction invalide." }, 400);
+      }
+      if (reason.length < 5 || (amountDelta === 0 && kilometersDelta === 0)) {
+        return await respond({ error: "Un motif et un écart non nul sont obligatoires." }, 400);
+      }
+      const { data: period, error: periodError } = await admin.from("expense_periods").select("id, status").eq("id", periodId).maybeSingle();
+      if (periodError) throw periodError;
+      if (!period) return await respond({ error: "Période introuvable." }, 404);
+      if (period.status !== "closed") return await respond({ error: "Les ajustements administratifs sont réservés aux périodes intégrées en paie." }, 409);
+      const { data: adjustment, error: adjustmentError } = await admin
+        .from("expense_adjustments")
+        .insert({
+          period_id: periodId,
+          expense_item_id: expenseItemId,
+          trip_id: tripId,
+          amount_delta: amountDelta,
+          kilometers_delta: kilometersDelta,
+          reason,
+          actor_id: null,
+          actor_source: "app_agence",
+        })
+        .select("id")
+        .single();
+      if (adjustmentError) throw adjustmentError;
+      return await respond({ ok: true, adjustmentId: adjustment.id });
     }
 
     if (operation === "manage_crm_user") {
