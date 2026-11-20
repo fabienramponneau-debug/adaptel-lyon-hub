@@ -47,6 +47,8 @@ import {
 } from "date-fns";
 import { fr } from "date-fns/locale";
 import { useUserView } from "@/contexts/UserViewContext";
+import { FinancialReportingSection } from "@/components/reporting/FinancialReportingSection";
+import { ClientPerformanceManager } from "@/components/admin/ClientPerformanceManager";
 
 interface Stats {
   totalProspects: number;
@@ -212,24 +214,41 @@ const Reporting = () => {
   };
 
   const fetchStats = async () => {
-    let query: any = (supabase as any)
-      .from("establishments")
-      .select("id, statut");
-    // Filtre sur le créateur par défaut (commercial_id)
-    query = applyUserFilter(query, true);
-    const { data: establishments } = await query;
-    if (!establishments) return;
+    const countPortfolio = async (statut?: EstablishmentFilter) => {
+      let query: any = sbAny
+        .from("establishments")
+        .select("id", { count: "exact", head: true })
+        .eq("actif", true);
+      if (statut && statut !== "tout") query = query.eq("statut", statut);
+      query = applyUserFilter(query, true);
+      const { count, error } = await query;
+      if (error) throw error;
+      return count ?? 0;
+    };
 
-    const prospects = establishments.filter((e: any) => e.statut === "prospect");
-    const clients = establishments.filter((e: any) => e.statut === "client");
-    const anciens = establishments.filter(
-      (e: any) => e.statut === "ancien_client"
-    );
+    let clientsQuery: any = sbAny
+      .from("establishments")
+      .select("id")
+      .eq("actif", true)
+      .eq("statut", "client");
+    clientsQuery = applyUserFilter(clientsQuery, true);
+
+    const [totalProspects, followedClients, anciensClients, clientsResult] = await Promise.all([
+      countPortfolio("prospect"),
+      countPortfolio("client"),
+      countPortfolio("ancien_client"),
+      clientsQuery,
+    ]);
+    if (clientsResult.error) throw clientsResult.error;
+    const clients = clientsResult.data ?? [];
+    const totalEstablishments = totalProspects + followedClients + anciensClients;
 
     // Clients déclenchés (client_triggered_by non null)
     let triggeredClientsQuery: any = (supabase as any)
       .from("establishments")
       .select("id", { count: "exact", head: true })
+      .eq("actif", true)
+      .eq("statut", "client")
       .not("client_triggered_by", "is", null);
 
     if (!isGlobalView) {
@@ -268,11 +287,11 @@ const Reporting = () => {
     ).length;
 
     setStats({
-      totalProspects: prospects.length,
+      totalProspects,
       clientsDeclenches: triggeredCount || 0,
       clientsAVoir,
-      anciensClients: anciens.length,
-      totalEstablishments: establishments.length,
+      anciensClients,
+      totalEstablishments,
     });
   };
 
@@ -749,6 +768,10 @@ const Reporting = () => {
         </div>
       </div>
 
+      <FinancialReportingSection />
+
+      <ClientPerformanceManager />
+
       {/* SECTION 1: KPIs PRINCIPAUX */}
       <section>
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -764,10 +787,8 @@ const Reporting = () => {
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
                     {stats.totalProspects} prospects •{" "}
-                    {stats.totalEstablishments -
-                      stats.totalProspects -
-                      stats.anciensClients}{" "}
-                    clients
+                    {stats.totalEstablishments - stats.totalProspects - stats.anciensClients}{" "}
+                    clients suivis
                   </p>
                 </div>
                 <div className="p-3 bg-[#840404]/10 rounded-lg">

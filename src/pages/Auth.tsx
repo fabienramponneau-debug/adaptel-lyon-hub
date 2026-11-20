@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,8 +8,6 @@ import { toast } from "sonner";
 import { Building2 } from "lucide-react";
 
 const Auth = () => {
-  const navigate = useNavigate();
-  const [showSignup, setShowSignup] = useState(false);
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -20,30 +17,27 @@ const Auth = () => {
     setLoading(true);
 
     try {
-      if (showSignup) {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            emailRedirectTo: `${window.location.origin}/`,
-          },
-        });
-        if (error) throw error;
-        toast.success("Compte créé avec succès");
-        setShowSignup(false);
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        if (error) throw error;
-        toast.success("Connexion réussie");
-        // FIX CRITIQUE: Force un rechargement complet pour contourner la race condition
-        // et garantir que UserViewContext.tsx recharge la session Supabase.
-        window.location.href = "/";
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (error) throw error;
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("actif")
+        .eq("id", data.user.id)
+        .maybeSingle();
+      if (profileError) throw profileError;
+      if (!profile?.actif) {
+        await supabase.auth.signOut();
+        throw new Error("Ce compte est inactif. Contactez l’administrateur.");
       }
-    } catch (error: any) {
-      toast.error(error.message || "Une erreur est survenue");
+
+      toast.success("Connexion réussie");
+      window.location.href = "/";
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Une erreur est survenue");
     } finally {
       setLoading(false);
     }
@@ -59,9 +53,9 @@ const Auth = () => {
               <span className="text-2xl font-bold text-primary">ADAPTEL</span>
             </div>
           </div>
-          <CardTitle className="text-2xl">{showSignup ? "Créer un compte" : "Connexion"}</CardTitle>
+          <CardTitle className="text-2xl">Connexion</CardTitle>
           <CardDescription>
-            {showSignup ? "Créez votre compte ADAPTEL Lyon" : "Accédez à votre espace de gestion commerciale"}
+            Accédez à votre espace de gestion commerciale
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -89,18 +83,9 @@ const Auth = () => {
               />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Chargement..." : (showSignup ? "Créer un compte" : "Connexion")}
+              {loading ? "Connexion..." : "Connexion"}
             </Button>
           </form>
-          <div className="mt-4 text-center">
-            <Button
-              variant="link"
-              onClick={() => setShowSignup(!showSignup)}
-              className="text-sm"
-            >
-              {showSignup ? "Déjà un compte ? Connectez-vous" : "Pas encore de compte ? Créer un compte"}
-            </Button>
-          </div>
         </CardContent>
       </Card>
     </div>

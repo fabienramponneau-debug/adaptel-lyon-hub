@@ -9,14 +9,17 @@ import {
   MapPin,
   Pencil,
   Trash2,
+  Lock,
 } from "lucide-react";
 import { Card, CardContent } from "./ui/card";
 import { supabase } from "@/integrations/supabase/client";
+import { useUserView } from "@/contexts/UserViewContext";
 
 type StatutAction = "effectue" | "a_venir" | "a_relancer";
 
 interface Action {
   id: string;
+  user_id: string;
   type: "phoning" | "mailing" | "visite" | "rdv" | string;
   date_action: string;
   commentaire: string | null;
@@ -45,6 +48,7 @@ export const EstablishmentTimeline = ({
   externalEditActionId,
   onResetExternalEdit,
 }: EstablishmentTimelineProps) => {
+  const { currentUserId, currentRole } = useUserView();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingComment, setEditingComment] = useState("");
   const [editingStatus, setEditingStatus] =
@@ -59,6 +63,7 @@ export const EstablishmentTimeline = ({
     if (!externalEditActionId) return;
     const action = actions.find((a) => a.id === externalEditActionId);
     if (!action) return;
+    if (currentRole !== "admin" && action.user_id !== currentUserId) return;
 
     setEditingId(action.id);
     setEditingComment(action.commentaire ?? "");
@@ -69,7 +74,13 @@ export const EstablishmentTimeline = ({
     if (onResetExternalEdit) {
       onResetExternalEdit();
     }
-  }, [externalEditActionId, actions, onResetExternalEdit]);
+  }, [
+    externalEditActionId,
+    actions,
+    currentRole,
+    currentUserId,
+    onResetExternalEdit,
+  ]);
 
   const getActionConfig = (type: string) => {
     const configs = {
@@ -270,6 +281,8 @@ export const EstablishmentTimeline = ({
               const isEditing = editingId === action.id;
               const isVisiteOuRdv =
                 action.type === "visite" || action.type === "rdv";
+              const canModify =
+                currentRole === "admin" || action.user_id === currentUserId;
 
               return (
                 <div key={action.id} className="flex gap-4 items-stretch">
@@ -317,23 +330,41 @@ export const EstablishmentTimeline = ({
                             </div>
                           )}
 
-                          <button
-                            type="button"
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-100"
-                            onClick={() =>
-                              isEditing ? cancelEdit() : startEdit(action)
-                            }
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-red-100 bg-white text-red-500 hover:bg-red-50"
-                            onClick={() => handleDelete(action.id)}
-                            disabled={deletingId === action.id}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          {canModify ? (
+                            <>
+                              <button
+                                type="button"
+                                aria-label={
+                                  isEditing
+                                    ? "Annuler la modification"
+                                    : "Modifier cette action"
+                                }
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-100"
+                                onClick={() =>
+                                  isEditing ? cancelEdit() : startEdit(action)
+                                }
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label="Supprimer cette action"
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-red-100 bg-white text-red-500 hover:bg-red-50 disabled:opacity-50"
+                                onClick={() => handleDelete(action.id)}
+                                disabled={deletingId === action.id}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </>
+                          ) : (
+                            <span
+                              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[11px] text-slate-500"
+                              title="Seul l'auteur ou un administrateur peut modifier cette action"
+                            >
+                              <Lock className="h-3 w-3" />
+                              Historique
+                            </span>
+                          )}
                         </div>
                       </div>
 

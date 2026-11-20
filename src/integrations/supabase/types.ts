@@ -158,12 +158,18 @@ export type Database = {
       }
       establishments: {
         Row: {
+          agency_client_id: string | null
           activite_id: string | null
           adresse: string | null
+          actif: boolean
+          client_triggered_at: string | null
+          client_triggered_by: string | null
           code_postal: string | null
           commentaire: string | null
           commercial_id: string | null
+          erp_client_code: string | null
           concurrent_id: string | null
+          converted_by: string | null
           created_at: string
           groupe_id: string | null
           id: string
@@ -176,14 +182,21 @@ export type Database = {
           // NOUVEAU
           latitude: number | null
           longitude: number | null
+          siret: string | null
         }
         Insert: {
+          agency_client_id?: string | null
           activite_id?: string | null
           adresse?: string | null
+          actif?: boolean
+          client_triggered_at?: string | null
+          client_triggered_by?: string | null
           code_postal?: string | null
           commentaire?: string | null
           commercial_id?: string | null
+          erp_client_code?: string | null
           concurrent_id?: string | null
+          converted_by?: string | null
           created_at?: string
           groupe_id?: string | null
           id?: string
@@ -196,14 +209,21 @@ export type Database = {
           // NOUVEAU
           latitude?: number | null
           longitude?: number | null
+          siret?: string | null
         }
         Update: {
+          agency_client_id?: string | null
           activite_id?: string | null
           adresse?: string | null
+          actif?: boolean
+          client_triggered_at?: string | null
+          client_triggered_by?: string | null
           code_postal?: string | null
           commentaire?: string | null
           commercial_id?: string | null
+          erp_client_code?: string | null
           concurrent_id?: string | null
+          converted_by?: string | null
           created_at?: string
           groupe_id?: string | null
           id?: string
@@ -216,6 +236,7 @@ export type Database = {
           // NOUVEAU
           latitude?: number | null
           longitude?: number | null
+          siret?: string | null
         }
         Relationships: [
           {
@@ -255,6 +276,240 @@ export type Database = {
           },
         ]
       }
+      establishment_assignment_history: {
+        Row: {
+          changed_at: string
+          changed_by: string | null
+          etablissement_id: string
+          id: string
+          new_commercial_id: string | null
+          previous_commercial_id: string | null
+        }
+        Insert: {
+          changed_at?: string
+          changed_by?: string | null
+          etablissement_id: string
+          id?: string
+          new_commercial_id?: string | null
+          previous_commercial_id?: string | null
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string | null
+          etablissement_id?: string
+          id?: string
+          new_commercial_id?: string | null
+          previous_commercial_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "establishment_assignment_history_changed_by_fkey"
+            columns: ["changed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "establishment_assignment_history_etablissement_id_fkey"
+            columns: ["etablissement_id"]
+            isOneToOne: false
+            referencedRelation: "establishments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "establishment_assignment_history_new_commercial_id_fkey"
+            columns: ["new_commercial_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "establishment_assignment_history_previous_commercial_id_fkey"
+            columns: ["previous_commercial_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      financial_change_history: {
+        Row: {
+          after_data: Json | null
+          before_data: Json | null
+          change_source: string
+          changed_at: string
+          changed_by: string | null
+          etablissement_id: string | null
+          id: string
+          operation: string
+          period_code: string | null
+          record_id: string
+          record_type: string
+          user_id: string | null
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          change_source?: string
+          changed_at?: string
+          changed_by?: string | null
+          etablissement_id?: string | null
+          id?: string
+          operation: string
+          period_code?: string | null
+          record_id: string
+          record_type: string
+          user_id?: string | null
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          change_source?: string
+          changed_at?: string
+          changed_by?: string | null
+          etablissement_id?: string | null
+          id?: string
+          operation?: string
+          period_code?: string | null
+          record_id?: string
+          record_type?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "financial_change_history_changed_by_fkey"
+            columns: ["changed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "financial_change_history_etablissement_id_fkey"
+            columns: ["etablissement_id"]
+            isOneToOne: false
+            referencedRelation: "establishments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "financial_change_history_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      objectifs_financiers: {
+        Row: {
+          created_at: string
+          id: string
+          objectif_ca: number
+          objectif_marge: number
+          period_code: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          objectif_ca?: number
+          objectif_marge?: number
+          period_code: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          objectif_ca?: number
+          objectif_marge?: number
+          period_code?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "objectifs_financiers_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      performances_clients: {
+        Row: {
+          agency_client_id: string | null
+          chiffre_affaires: number
+          cloture_at: string | null
+          cloture_by: string | null
+          commentaire: string | null
+          created_at: string
+          etablissement_id: string
+          id: string
+          marge: number
+          period_code: string
+          source: string
+          statut_cloture: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          agency_client_id?: string | null
+          chiffre_affaires?: number
+          cloture_at?: string | null
+          cloture_by?: string | null
+          commentaire?: string | null
+          created_at?: string
+          etablissement_id: string
+          id?: string
+          marge?: number
+          period_code: string
+          source?: string
+          statut_cloture?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          agency_client_id?: string | null
+          chiffre_affaires?: number
+          cloture_at?: string | null
+          cloture_by?: string | null
+          commentaire?: string | null
+          created_at?: string
+          etablissement_id?: string
+          id?: string
+          marge?: number
+          period_code?: string
+          source?: string
+          statut_cloture?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "performances_clients_cloture_by_fkey"
+            columns: ["cloture_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "performances_clients_etablissement_id_fkey"
+            columns: ["etablissement_id"]
+            isOneToOne: false
+            referencedRelation: "establishments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "performances_clients_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       parametrages: {
         Row: {
           categorie: Database["public"]["Enums"]["parametrage_category"]
@@ -275,6 +530,66 @@ export type Database = {
           valeur?: string
         }
         Relationships: []
+      }
+      previsions_clients: {
+        Row: {
+          chiffre_affaires_estime_planning: number
+          chiffre_affaires_previsionnel: number
+          commentaire: string | null
+          created_at: string
+          etablissement_id: string
+          id: string
+          marge_estimee_planning: number | null
+          marge_previsionnelle: number
+          period_code: string
+          planning_synced_at: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          chiffre_affaires_estime_planning?: number
+          chiffre_affaires_previsionnel?: number
+          commentaire?: string | null
+          created_at?: string
+          etablissement_id: string
+          id?: string
+          marge_estimee_planning?: number | null
+          marge_previsionnelle?: number
+          period_code: string
+          planning_synced_at?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          chiffre_affaires_estime_planning?: number
+          chiffre_affaires_previsionnel?: number
+          commentaire?: string | null
+          created_at?: string
+          etablissement_id?: string
+          id?: string
+          marge_estimee_planning?: number | null
+          marge_previsionnelle?: number
+          period_code?: string
+          planning_synced_at?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "previsions_clients_etablissement_id_fkey"
+            columns: ["etablissement_id"]
+            isOneToOne: false
+            referencedRelation: "establishments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "previsions_clients_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {

@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Plus, Pencil, Trash2, Check, X, Sliders } from "lucide-react";
 import { toast } from "sonner";
 import { format, addMonths } from "date-fns";
+import { CrmUsersManager } from "@/components/admin/CrmUsersManager";
+import { FinancialObjectivesManager } from "@/components/admin/FinancialObjectivesManager";
 
 interface Parametrage {
   id: string;
@@ -516,6 +518,10 @@ const Parametrage = () => {
         <div className="text-center text-muted-foreground">Chargement...</div>
       ) : (
         <>
+          {currentRole === "admin" && <CrmUsersManager />}
+
+          {currentRole === "admin" && <FinancialObjectivesManager users={users} />}
+
           <div className="grid gap-6 md:grid-cols-2">
             {renderCategory("Groupes", "groupe")}
             {renderCategory("Secteurs", "secteur")}

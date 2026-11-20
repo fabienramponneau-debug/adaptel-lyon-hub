@@ -40,6 +40,7 @@ import {
   Briefcase,
   MapPin,
   CheckCircle2,
+  History,
   X,
 } from "lucide-react";
 import { EstablishmentSheet } from "@/components/EstablishmentSheet";
@@ -85,15 +86,17 @@ type StatutFilter =
   | "archived";
 type ActionType = "phoning" | "mailing" | "visite" | "rdv";
 type ActionStatut = "a_venir" | "effectue";
+type PortfolioView = "mine" | "history";
 
 export default function Etablissements() {
-  // On garde le contexte (utile ailleurs) mais on NE FILTRE PLUS par user
-  const { selectedUserId, loadingUserView } = useUserView() as any;
+  const { selectedUserId, selectedUserLabel, loadingUserView } =
+    useUserView() as any;
 
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [portfolioView, setPortfolioView] = useState<PortfolioView>("mine");
 
   const [params, setParams] = useState<{
     groupes: Parametrage[];
@@ -168,7 +171,7 @@ export default function Etablissements() {
     }
     fetchParametrages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadingUserView, fStatut]);
+  }, [loadingUserView, fStatut, portfolioView, selectedUserId]);
 
   async function fetchRows() {
     setLoading(true);
@@ -177,7 +180,7 @@ export default function Etablissements() {
       .from("establishments")
       .select(
         `
-        id, nom, ville, code_postal, statut, actif,
+        id, nom, ville, code_postal, statut, actif, commercial_id,
         groupe:groupe_id(valeur),
         secteur:secteur_id(valeur),
         activite:activite_id(valeur)
@@ -185,8 +188,17 @@ export default function Etablissements() {
       )
       .order("nom", { ascending: true });
 
-    // ❌ SUPPRESSION du filtrage par commercial_id
-    // Tous les users voient tous les établissements
+    // Le portefeuille courant reste distinct de la base historique partagée.
+    // On ne duplique aucune fiche : les actions passées restent attachées au
+    // même établissement, quel que soit le commercial qui les consulte.
+    if (selectedUserId) {
+      query =
+        portfolioView === "mine"
+          ? query.eq("commercial_id", selectedUserId)
+          : query.or(
+              `commercial_id.neq.${selectedUserId},commercial_id.is.null`
+            );
+    }
 
     // Filtrage actif / archivé
     if (fStatut === "archived") {
@@ -419,6 +431,30 @@ export default function Etablissements() {
     fetchRows();
   }
 
+  async function handleAttachToPortfolio(id: string) {
+    if (!selectedUserId) {
+      toast.error("Aucun commercial sélectionné.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("establishments")
+      .update({ commercial_id: selectedUserId })
+      .eq("id", id);
+
+    if (error) {
+      toast.error("La fiche n'a pas pu être ajoutée au portefeuille.");
+      return;
+    }
+
+    toast.success(`Fiche ajoutée au portefeuille de ${selectedUserLabel}.`, {
+      description: "L'historique des actions précédentes est conservé.",
+    });
+    setPortfolioView("mine");
+    setSelectedId(id);
+    setSheetOpen(true);
+  }
+
   function handleQuickCancel() {
     resetQuick();
     setQuickOpen(false);
@@ -524,6 +560,48 @@ export default function Etablissements() {
           </Button>
           {/* SUPPRESSION du bouton Exporter */}
         </div>
+      </div>
+
+      <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white p-2 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div
+          className="flex gap-1"
+          role="group"
+          aria-label="Sélection de la base établissements"
+        >
+          <Button
+            type="button"
+            size="sm"
+            variant={portfolioView === "mine" ? "default" : "ghost"}
+            className={
+              portfolioView === "mine"
+                ? "bg-[#840404] hover:bg-[#6f0303]"
+                : "text-gray-700"
+            }
+            onClick={() => setPortfolioView("mine")}
+          >
+            <Briefcase className="mr-2 h-4 w-4" />
+            Mon portefeuille
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={portfolioView === "history" ? "default" : "ghost"}
+            className={
+              portfolioView === "history"
+                ? "bg-[#840404] hover:bg-[#6f0303]"
+                : "text-gray-700"
+            }
+            onClick={() => setPortfolioView("history")}
+          >
+            <History className="mr-2 h-4 w-4" />
+            Base historique
+          </Button>
+        </div>
+        <p className="px-2 text-xs text-gray-600">
+          {portfolioView === "mine"
+            ? "Vos créations et les établissements qui vous sont attribués."
+            : "Anciennes fiches et actions consultables avant reprise dans votre portefeuille."}
+        </p>
       </div>
 
       {/* Stats */}
@@ -1127,19 +1205,51 @@ export default function Etablissements() {
                       <div className="flex flex-col items-center justify-center text-gray-500">
                         <Building2 className="h-10 w-10 mb-3 opacity-50" />
                         <p className="font-medium mb-1">
-                          Aucun établissement trouvé
+                          {portfolioView === "mine" &&
+                          activeFilters === 0 &&
+                          !qDeb
+                            ? "Votre portefeuille est prêt à être constitué"
+                            : "Aucun établissement trouvé"}
                         </p>
                         <p className="text-sm mb-4">
-                          Ajustez vos critères de recherche
+                          {portfolioView === "mine" &&
+                          activeFilters === 0 &&
+                          !qDeb
+                            ? "Créez un prospect ou consultez la base historique avant votre prochaine action."
+                            : "Ajustez vos critères de recherche"}
                         </p>
-                        <Button
-                          variant="outline"
-                          onClick={resetFilters}
-                          className="gap-2 h-8"
-                        >
-                          <X className="h-3 w-3" />
-                          Réinitialiser les filtres
-                        </Button>
+                        {portfolioView === "mine" &&
+                        activeFilters === 0 &&
+                        !qDeb ? (
+                          <div className="flex flex-wrap justify-center gap-2">
+                            <Button
+                              size="sm"
+                              onClick={openNewSheet}
+                              className="gap-2 bg-blue-600 hover:bg-blue-700"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                              Créer un prospect
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setPortfolioView("history")}
+                              className="gap-2"
+                            >
+                              <History className="h-3.5 w-3.5" />
+                              Consulter l'historique
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            onClick={resetFilters}
+                            className="gap-2 h-8"
+                          >
+                            <X className="h-3 w-3" />
+                            Réinitialiser les filtres
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -1223,6 +1333,18 @@ export default function Etablissements() {
                               <DropdownMenuItem onClick={() => openSheet(r.id)}>
                                 Voir détails
                               </DropdownMenuItem>
+
+                              {portfolioView === "history" &&
+                                selectedUserId && (
+                                  <DropdownMenuItem
+                                    onClick={() =>
+                                      void handleAttachToPortfolio(r.id)
+                                    }
+                                    className="text-blue-700 focus:text-blue-800"
+                                  >
+                                    Ajouter au portefeuille
+                                  </DropdownMenuItem>
+                                )}
 
                               <DropdownMenuSeparator />
 

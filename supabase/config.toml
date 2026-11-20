@@ -1,1 +1,7 @@
-project_id = "nxlscmarqseefkaunrqp"
+project_id = "hwkhaxawsqvgarxlqzzd"
+
+[functions.agency-crm-bridge]
+verify_jwt = false
+
+[functions.sync-agency-actuals]
+verify_jwt = true

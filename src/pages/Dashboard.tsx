@@ -115,8 +115,9 @@ const Dashboard = () => {
   };
 
   useEffect(() => {
-    fetchStats();
-  }, []);
+    if (!selectedUserId || loadingUserView) return;
+    void fetchStats();
+  }, [selectedUserId, loadingUserView]);
 
   useEffect(() => {
     if (!selectedUserId || loadingUserView) return;
@@ -131,14 +132,30 @@ const Dashboard = () => {
   ).length;
 
   const fetchStats = async () => {
-    const { data } = await supabase.from("establishments").select("statut");
-    if (data) {
-      const prospects = data.filter((e) => e.statut === "prospect").length;
-      const clients = data.filter((e) => e.statut === "client").length;
-      const anciensClients = data.filter(
-        (e) => e.statut === "ancien_client"
-      ).length;
+    const countEstablishments = async (
+      statut: "prospect" | "client" | "ancien_client",
+      ownerColumn: "commercial_id" | "client_triggered_by"
+    ) => {
+      let query = supabase
+        .from("establishments")
+        .select("id", { count: "exact", head: true })
+        .eq("actif", true)
+        .eq("statut", statut);
+      if (!isGlobalView) query = query.eq(ownerColumn, selectedUserId);
+      const { count, error } = await query;
+      if (error) throw error;
+      return count ?? 0;
+    };
+
+    try {
+      const [prospects, clients, anciensClients] = await Promise.all([
+        countEstablishments("prospect", "commercial_id"),
+        countEstablishments("client", "client_triggered_by"),
+        countEstablishments("ancien_client", "commercial_id"),
+      ]);
       setStats({ prospects, clients, anciensClients });
+    } catch (error) {
+      console.error("Impossible de charger les compteurs du tableau de bord", error);
     }
   };
 

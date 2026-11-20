@@ -82,6 +82,17 @@ export const UserViewProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
 
+      if (!profile?.actif) {
+        await supabase.auth.signOut();
+        setCurrentUserId(null);
+        setCurrentRole(null);
+        setProfileData(null);
+        setUsers([]);
+        setSelectedUserId(null);
+        setLoadingUserView(false);
+        return;
+      }
+
       const role = (profile?.role as RoleType) || "commercial";
       setCurrentRole(role);
       
