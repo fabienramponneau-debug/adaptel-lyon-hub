@@ -163,17 +163,20 @@ Deno.serve(async (request) => {
     }
 
     if (operation === "list_linkable_crm_prospects") {
-      const search = clean(body?.search);
-      let query = admin
+      // Tous les établissements actifs non reliés, y compris le statut « client » :
+      // une fiche déjà classée client dans le CRM peut ne pas encore avoir de lien agence.
+      // Le statut commercial et l'attribution ne sont pas modifiés par cette lecture.
+      const search = clean(body?.search).replace(/[%_\\]/g, "").slice(0, 80);
+      if (search.length < 2) return await respond({ prospects: [] });
+      const { data, error } = await admin
         .from("establishments")
-        .select("id, nom, adresse, code_postal, ville, siret, commercial_id, created_at")
-        .in("statut", ["prospect", "ancien_client"])
+        .select("id, nom, adresse, code_postal, ville, siret, statut, erp_client_code, commercial_id, created_at")
+        .in("statut", ["prospect", "ancien_client", "client"])
         .eq("actif", true)
         .is("agency_client_id", null)
-        .order("updated_at", { ascending: false })
+        .ilike("nom", `%${search}%`)
+        .order("nom")
         .limit(30);
-      if (search) query = query.ilike("nom", `%${search}%`);
-      const { data, error } = await query;
       if (error) throw error;
       return await respond({ prospects: data ?? [] });
     }

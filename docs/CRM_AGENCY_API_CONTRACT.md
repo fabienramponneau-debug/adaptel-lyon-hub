@@ -81,7 +81,7 @@ Rapproche une seule fois `establishmentId` avec `agencyClientId`, `erpClientCode
 
 ### `list_linkable_crm_prospects`
 
-Recherche les prospects et anciens clients CRM actifs non encore lies afin de pouvoir selectionner explicitement la bonne fiche pendant la creation du client agence. Une ressemblance de nom ne valide jamais automatiquement la liaison.
+Recherche par nom les etablissements CRM actifs non encore lies, quel que soit leur statut (prospect, client, ancien client). Une ressemblance de nom ne valide jamais automatiquement la liaison. Le matricule ERP est celui de l'app agence au moment du lien ; il n'a pas a etre saisi d'abord dans le CRM.
 
 ### `list_linked_clients`
 
