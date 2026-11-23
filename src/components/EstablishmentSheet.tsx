@@ -369,29 +369,6 @@ export const EstablishmentSheet = ({
 
         const full: any = { ...payload };
 
-        // Logique attribution commercial déclencheur
-        if (Object.prototype.hasOwnProperty.call(full, "client_triggered_by")) {
-          const newCommercialId =
-            full.client_triggered_by === "none"
-              ? null
-              : full.client_triggered_by;
-
-          if (newCommercialId && model.client_triggered_at === null) {
-            full.client_triggered_at = formatDateToISO(new Date());
-          } else if (newCommercialId === null || model.statut !== "client") {
-            full.client_triggered_by = null;
-            full.client_triggered_at = null;
-          }
-
-          full.client_triggered_by = newCommercialId;
-        } else if (
-          Object.prototype.hasOwnProperty.call(full, "statut") &&
-          full.statut !== "client"
-        ) {
-          full.client_triggered_by = null;
-          full.client_triggered_at = null;
-        }
-
         // Géocodage si adresse / CP / ville modifiés ou coords manquantes
         const addressFields: (keyof typeof full)[] = [
           "adresse",
@@ -655,15 +632,6 @@ export const EstablishmentSheet = ({
 
       const userId = user.id;
 
-      const clientTriggeredBy =
-        model.statut === "client" && model.client_triggered_by !== "none"
-          ? model.client_triggered_by
-          : null;
-      const clientTriggeredAt =
-        model.statut === "client" && clientTriggeredBy !== null
-          ? formatDateToISO(new Date())
-          : null;
-
       const payload: any = {
         nom: model.nom.trim(),
         statut: model.statut || "prospect",
@@ -677,9 +645,7 @@ export const EstablishmentSheet = ({
         commentaire: model.commentaire || null,
         concurrent_id: model.concurrent_id || null,
         info_concurrent: model.info_concurrent || null,
-        commercial_id: userId,
-        client_triggered_by: clientTriggeredBy,
-        client_triggered_at: clientTriggeredAt,
+        commercial_id: model.commercial_id || userId,
         latitude: coords ? coords.latitude : null,
         longitude: coords ? coords.longitude : null,
       };
@@ -863,36 +829,29 @@ export const EstablishmentSheet = ({
                       </Select>
                     </div>
 
-                    {model.statut === "client" && (
-                      <div className="col-span-2">
-                        <label className="text-sm font-medium text-slate-700">
-                          Commercial déclencheur (pour reporting)
-                        </label>
-                        <Select
-                          value={model.client_triggered_by || "none"}
-                          onValueChange={(v) =>
-                            onChange({
-                              client_triggered_by:
-                                v === "none" ? null : v,
-                            })
-                          }
-                        >
-                          <SelectTrigger className="mt-1">
-                            <SelectValue placeholder="Non renseigné" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">
-                              Non renseigné
+                    <div className="col-span-2">
+                      <label className="text-sm font-medium text-slate-700">
+                        Commercial attribué
+                      </label>
+                      <Select
+                        value={model.commercial_id || "none"}
+                        onValueChange={(v) =>
+                          onChange({ commercial_id: v === "none" ? null : v })
+                        }
+                      >
+                        <SelectTrigger className="mt-1">
+                          <SelectValue placeholder="Non renseigné" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Non renseigné</SelectItem>
+                          {commercials.map((c: any) => (
+                            <SelectItem key={c.id} value={c.id}>
+                              {c.label}
                             </SelectItem>
-                            {commercials.map((c: any) => (
-                              <SelectItem key={c.id} value={c.id}>
-                                {c.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
                     {/* Nom + alerte doublons */}
                     <div className="col-span-2">

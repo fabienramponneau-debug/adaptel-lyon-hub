@@ -52,7 +52,7 @@ import { ClientPerformanceManager } from "@/components/admin/ClientPerformanceMa
 
 interface Stats {
   totalProspects: number;
-  clientsDeclenches: number; // Maintenant compté via client_triggered_by
+  clientsAttribues: number;
   clientsAVoir: number;
   anciensClients: number;
   totalEstablishments: number;
@@ -130,7 +130,7 @@ const Reporting = () => {
 
   const [stats, setStats] = useState<Stats>({
     totalProspects: 0,
-    clientsDeclenches: 0,
+    clientsAttribues: 0,
     clientsAVoir: 0,
     anciensClients: 0,
     totalEstablishments: 0,
@@ -243,17 +243,17 @@ const Reporting = () => {
     const clients = clientsResult.data ?? [];
     const totalEstablishments = totalProspects + followedClients + anciensClients;
 
-    // Clients déclenchés (client_triggered_by non null)
+    // Clients actuellement attribués à un commercial.
     let triggeredClientsQuery: any = (supabase as any)
       .from("establishments")
       .select("id", { count: "exact", head: true })
       .eq("actif", true)
       .eq("statut", "client")
-      .not("client_triggered_by", "is", null);
+      .not("commercial_id", "is", null);
 
     if (!isGlobalView) {
       triggeredClientsQuery = triggeredClientsQuery.eq(
-        "client_triggered_by",
+        "commercial_id",
         selectedUserId
       );
     }
@@ -288,7 +288,7 @@ const Reporting = () => {
 
     setStats({
       totalProspects,
-      clientsDeclenches: triggeredCount || 0,
+      clientsAttribues: triggeredCount || 0,
       clientsAVoir,
       anciensClients,
       totalEstablishments,
@@ -803,10 +803,10 @@ const Reporting = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-slate-600">
-                    Clients Déclenchés
+                    Clients attribués
                   </p>
                   <p className="text-2xl font-bold text-slate-900 mt-1">
-                    {stats.clientsDeclenches}
+                    {stats.clientsAttribues}
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
                     Attribués à la vue courante

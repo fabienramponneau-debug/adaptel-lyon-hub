@@ -76,7 +76,7 @@ Deno.serve(async (request) => {
 
     let linkedQuery = admin
       .from("establishments")
-      .select("id, agency_client_id, client_triggered_by")
+      .select("id, agency_client_id, commercial_id")
       .eq("statut", "client")
       .not("agency_client_id", "is", null);
     const requestedAgencyIds = Array.isArray(body?.agencyClientIds)
@@ -164,12 +164,12 @@ Deno.serve(async (request) => {
         skippedInvalid += 1;
         continue;
       }
-      if (!link.client_triggered_by) {
+      if (!link.commercial_id) {
         skippedWithoutCommercial += 1;
         continue;
       }
       rows.push({
-        user_id: link.client_triggered_by,
+        user_id: link.commercial_id,
         etablissement_id: link.id,
         period_code: periodCode,
         chiffre_affaires: revenue,
@@ -190,40 +190,53 @@ Deno.serve(async (request) => {
       }, 502);
     }
 
-    // On repère d'abord les lignes devenues obsolètes. Les nouvelles valeurs
-    // sont écrites avant leur suppression : un échec d'upsert ne peut donc pas
-    // effacer les chiffres déjà présents.
-    const desiredKeys = new Set(rows.map((row) => `${row.agency_client_id}|${row.period_code}`));
-    const staleIds = [];
-    for (const agencyIds of chunk([...linkByAgencyId.keys()], 500)) {
+    // Une réattribution ne doit jamais dupliquer ni déplacer rétroactivement un
+    // mois déjà clôturé. Une ligne agence existante conserve donc son user_id ;
+    // seules les nouvelles périodes prennent le commercial actuellement attribué.
+    const existingByKey = new Map();
+    for (const establishmentIds of chunk(links.map((link) => link.id), 500)) {
       const { data: existingRows, error: existingError } = await admin
         .from("performances_clients")
-        .select("id, agency_client_id, period_code")
-        .eq("source", "agence")
-        .in("agency_client_id", agencyIds)
+        .select("id, user_id, etablissement_id, agency_client_id, period_code, source")
+        .in("etablissement_id", establishmentIds)
         .gte("period_code", fromPeriod)
         .lte("period_code", toPeriod);
       if (existingError) throw existingError;
       for (const existing of existingRows ?? []) {
-        if (!desiredKeys.has(`${existing.agency_client_id}|${existing.period_code}`)) staleIds.push(existing.id);
+        const key = `${existing.etablissement_id}|${existing.period_code}`;
+        if (existingByKey.has(key)) {
+          return json({ error: "Plusieurs résultats CRM existent pour un même client et un même mois ; synchronisation annulée." }, 409);
+        }
+        existingByKey.set(key, existing);
       }
     }
 
-    for (const rowBatch of chunk(rows, 500)) {
-      const { error: upsertError } = await admin
-        .from("performances_clients")
-        .upsert(rowBatch, { onConflict: "user_id,etablissement_id,period_code" });
-      if (upsertError) throw upsertError;
+    const updates = [];
+    const inserts = [];
+    for (const row of rows) {
+      const existing = existingByKey.get(`${row.etablissement_id}|${row.period_code}`);
+      if (!existing) {
+        inserts.push(row);
+        continue;
+      }
+      if (existing.source !== "agence") {
+        return json({ error: "Un résultat saisi directement dans le CRM existe déjà pour cette période ; synchronisation annulée." }, 409);
+      }
+      updates.push({ ...row, id: existing.id, user_id: existing.user_id });
     }
 
-    // Une réouverture côté agence retire le mois de la réponse. L'ancienne
-    // ligne CRM est supprimée seulement après la réussite de tous les upserts.
-    for (const staleBatch of chunk(staleIds, 500)) {
-      const { error: deleteError } = await admin
+    for (const rowBatch of chunk(updates, 500)) {
+      const { error: updateError } = await admin
         .from("performances_clients")
-        .delete()
-        .in("id", staleBatch);
-      if (deleteError) throw deleteError;
+        .upsert(rowBatch, { onConflict: "id" });
+      if (updateError) throw updateError;
+    }
+
+    for (const rowBatch of chunk(inserts, 500)) {
+      const { error: insertError } = await admin
+        .from("performances_clients")
+        .insert(rowBatch);
+      if (insertError) throw insertError;
     }
 
     return json({

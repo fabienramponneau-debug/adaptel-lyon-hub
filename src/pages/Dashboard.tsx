@@ -134,7 +134,7 @@ const Dashboard = () => {
   const fetchStats = async () => {
     const countEstablishments = async (
       statut: "prospect" | "client" | "ancien_client",
-      ownerColumn: "commercial_id" | "client_triggered_by"
+      ownerColumn: "commercial_id"
     ) => {
       let query = supabase
         .from("establishments")
@@ -150,7 +150,7 @@ const Dashboard = () => {
     try {
       const [prospects, clients, anciensClients] = await Promise.all([
         countEstablishments("prospect", "commercial_id"),
-        countEstablishments("client", "client_triggered_by"),
+        countEstablishments("client", "commercial_id"),
         countEstablishments("ancien_client", "commercial_id"),
       ]);
       setStats({ prospects, clients, anciensClients });

@@ -118,14 +118,12 @@ Deno.serve(async (request) => {
       const establishmentId = clean(body?.establishmentId);
       const agencyClientId = clean(body?.agencyClientId);
       const erpClientCode = clean(body?.erpClientCode);
-      const linkMode = clean(body?.linkMode);
       const siret = clean(body?.siret) || null;
       if (!establishmentId || !agencyClientId || !erpClientCode) return await respond({ error: "Fiche CRM, identifiant agence et matricule ERP obligatoires." }, 400);
-      if (!['new_business', 'historical_match'].includes(linkMode)) return await respond({ error: "Le type de liaison doit être précisé." }, 400);
 
       const { data: establishment, error: establishmentError } = await admin
         .from("establishments")
-        .select("id, nom, statut, commercial_id, client_triggered_by, client_triggered_at, agency_client_id, erp_client_code")
+        .select("id, nom, agency_client_id, erp_client_code")
         .eq("id", establishmentId)
         .single();
       if (establishmentError || !establishment) return await respond({ error: "Fiche CRM introuvable." }, 404);
@@ -138,25 +136,15 @@ Deno.serve(async (request) => {
       ]);
       if (agencyConflict || erpConflict) return await respond({ error: "Ce client agence ou ce matricule ERP est déjà relié à une autre fiche CRM." }, 409);
 
-      const isNewBusiness = linkMode === "new_business";
-      const triggeredBy = isNewBusiness
-        ? (establishment.client_triggered_by ?? establishment.commercial_id)
-        : establishment.client_triggered_by;
-      const triggeredAt = isNewBusiness && triggeredBy
-        ? (establishment.client_triggered_at ?? new Date().toISOString().slice(0, 10))
-        : establishment.client_triggered_at;
       const { data, error } = await admin
         .from("establishments")
         .update({
-          statut: "client",
           agency_client_id: agencyClientId,
           erp_client_code: erpClientCode,
           siret,
-          client_triggered_by: triggeredBy,
-          client_triggered_at: triggeredAt,
         })
         .eq("id", establishmentId)
-        .select("id, nom, agency_client_id, erp_client_code, siret, client_triggered_by, client_triggered_at")
+        .select("id, nom, statut, agency_client_id, erp_client_code, siret, commercial_id, client_triggered_by, client_triggered_at")
         .single();
       if (error) return await respond({ error: error.message }, 400);
       return await respond({ client: data });
@@ -212,17 +200,15 @@ Deno.serve(async (request) => {
           results.push({ agencyClientId, ok: false, error: "Données invalides." });
           continue;
         }
-        const { data: establishment, error: clientError } = await admin.from("establishments").select("id, commercial_id, client_triggered_by").eq("agency_client_id", agencyClientId).maybeSingle();
-        // Les estimations du planning appartiennent au commercial qui a
-        // réellement déclenché le client, pas à son simple responsable actuel.
-        const userId = establishment?.client_triggered_by;
+        const { data: establishment, error: clientError } = await admin.from("establishments").select("id, commercial_id").eq("agency_client_id", agencyClientId).maybeSingle();
+        const userId = establishment?.commercial_id;
         if (clientError || !establishment || !userId) {
           results.push({ agencyClientId, ok: false, error: "Client non rapproché ou sans commercial." });
           continue;
         }
         const planningValues = { user_id: userId, etablissement_id: establishment.id, period_code: periodCode, chiffre_affaires_estime_planning: revenue, planning_synced_at: new Date().toISOString() };
         if (margin !== null) planningValues.marge_estimee_planning = margin;
-        const { error } = await admin.from("previsions_clients").upsert(planningValues, { onConflict: "user_id,etablissement_id,period_code" });
+        const { error } = await admin.from("previsions_clients").upsert(planningValues, { onConflict: "etablissement_id,period_code" });
         results.push({ agencyClientId, ok: !error, error: error?.message });
       }
       return await respond({ results, successCount: results.filter((item) => item.ok).length });
@@ -274,7 +260,7 @@ Deno.serve(async (request) => {
         actionsQuery = actionsQuery.eq("user_id", userId);
         activityTargetsQuery = activityTargetsQuery.eq("user_id", userId);
         prospectsQuery = prospectsQuery.eq("commercial_id", userId);
-        clientsQuery = clientsQuery.eq("client_triggered_by", userId);
+        clientsQuery = clientsQuery.eq("commercial_id", userId);
       }
       const [targets, forecasts, actuals, actions, activityTargets, prospects, clients] = await Promise.all([
         targetsQuery,
@@ -318,7 +304,7 @@ Deno.serve(async (request) => {
         .range(0, 4999);
       if (userId && userId !== "tous") {
         if (!validUuid(userId)) return await respond({ error: "Commercial invalide." }, 400);
-        establishmentsQuery = establishmentsQuery.or(`commercial_id.eq.${userId},client_triggered_by.eq.${userId}`);
+        establishmentsQuery = establishmentsQuery.eq("commercial_id", userId);
       }
       const { data: establishments, error: establishmentsError } = await establishmentsQuery;
       if (establishmentsError) throw establishmentsError;

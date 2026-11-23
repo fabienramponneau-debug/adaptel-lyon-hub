@@ -50,7 +50,7 @@ Table `public.previsions_clients` :
 
 Le total previsionnel d'un commercial n'est jamais saisi directement : il est toujours la somme de ses clients. La synchronisation agence ne doit jamais ecraser les colonnes de prevision saisies par le commercial.
 
-Un client est inclus automatiquement dans le suivi financier d'un commercial uniquement lorsque `establishments.client_triggered_by` correspond a ce commercial et que l'etablissement a le statut `client`. Un prospect affecte via `commercial_id` peut etre ajoute explicitement au previsionnel d'un mois, sans devenir pour autant un client declenche.
+Un client est inclus automatiquement dans le suivi financier du commercial actuellement attribue via `establishments.commercial_id`. Les champs `client_triggered_by` et `client_triggered_at` sont reserves a l'historique des primes et ne pilotent plus le portefeuille ni les flux financiers.
 
 Les quatre niveaux restent independants : objectif fixe par l'administrateur, previsionnel saisi par le commercial, estimation issue du planning agence et realise consolide apres cloture. Le taux de marge est calcule avec `marge / chiffre d'affaires x 100`.
 
@@ -77,7 +77,7 @@ Toutes les requetes sont des `POST` avec l'en-tete serveur `x-adaptel-sync-secre
 
 ### `link_client`
 
-Rapproche une seule fois `establishmentId` avec `agencyClientId`, `erpClientCode`, un `linkMode` obligatoire (`new_business` ou `historical_match`) et, si disponible, le SIRET. La meme fiche CRM passe au statut client et conserve ses actions. `new_business` fixe le declencheur et la date de depart des primes ; `historical_match` ne cree jamais d'attribution commerciale ni de prime. L'operation refuse tout identifiant agence ou matricule deja lie a une autre fiche.
+Rapproche une seule fois `establishmentId` avec `agencyClientId`, `erpClientCode` et, si disponible, le SIRET. Cette operation est strictement technique : elle ne modifie ni le statut CRM, ni `commercial_id`, ni les champs de prime. L'operation refuse tout identifiant agence ou matricule deja lie a une autre fiche.
 
 ### `list_linkable_crm_prospects`
 
@@ -104,7 +104,7 @@ Entree :
 Traitement :
 
 1. retrouver `establishments.agency_client_id` ;
-2. utiliser le `client_triggered_by` de l'etablissement comme `user_id` ;
+2. utiliser le `commercial_id` courant de l'etablissement comme `user_id` ;
 3. faire un upsert dans `previsions_clients` uniquement sur les champs `*_estime_planning` et `planning_synced_at` ;
 4. accepter `estimatedMargin = null` tant que l'app agence ne dispose pas d'un calcul de marge, et refuser les autres valeurs invalides, les mois invalides et les clients non rapproches ;
 5. retourner un statut explicite sans creer silencieusement un doublon.
@@ -146,9 +146,12 @@ actif. Elle appelle `crm-agence-entrant` avec l'operation
 - une periode couvre de 1 a 36 mois ;
 - seuls les clients deja rapproches sont demandes ;
 - seuls les mois confirmes par l'agence sont importes ;
-- un mois rouvert dans l'agence disparait du realise CRM au prochain import ;
-- un client sans `client_triggered_by` n'est attribue a aucun commercial et est
+- un mois deja importe n'est jamais supprime automatiquement : une reouverture
+  agence conserve le dernier cloture CRM jusqu'a une nouvelle confirmation ;
+- un client sans `commercial_id` n'est attribue a aucun commercial et est
   signale dans le bilan de synchronisation ;
+- une periode deja cloturee conserve le commercial auquel elle avait ete
+  attribuee ; seules les nouvelles periodes prennent l'attribution courante ;
 - les saisies manuelles CRM ne sont pas supprimees en masse : une ligne agence
   ne la remplace que lorsqu'un reel confirme correspondant existe.
 
