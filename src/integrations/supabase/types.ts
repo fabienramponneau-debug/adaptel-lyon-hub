@@ -399,6 +399,45 @@ export type Database = {
           },
         ]
       }
+      commission_rules: {
+        Row: {
+          actor_agency_user_id: string | null
+          actor_name: string | null
+          base_rate: number
+          bonus_rate: number
+          created_at: string
+          effective_from: string
+          id: string
+          margin_basis: string
+          month_from: number
+          month_to: number | null
+        }
+        Insert: {
+          actor_agency_user_id?: string | null
+          actor_name?: string | null
+          base_rate: number
+          bonus_rate?: number
+          created_at?: string
+          effective_from: string
+          id?: string
+          margin_basis?: string
+          month_from: number
+          month_to?: number | null
+        }
+        Update: {
+          actor_agency_user_id?: string | null
+          actor_name?: string | null
+          base_rate?: number
+          bonus_rate?: number
+          created_at?: string
+          effective_from?: string
+          id?: string
+          margin_basis?: string
+          month_from?: number
+          month_to?: number | null
+        }
+        Relationships: []
+      }
       objectifs_financiers: {
         Row: {
           created_at: string
@@ -406,6 +445,7 @@ export type Database = {
           objectif_ca: number
           objectif_marge: number
           period_code: string
+          reference_marge: string
           updated_at: string
           user_id: string
         }
@@ -415,6 +455,7 @@ export type Database = {
           objectif_ca?: number
           objectif_marge?: number
           period_code: string
+          reference_marge?: string
           updated_at?: string
           user_id: string
         }
@@ -424,6 +465,7 @@ export type Database = {
           objectif_ca?: number
           objectif_marge?: number
           period_code?: string
+          reference_marge?: string
           updated_at?: string
           user_id?: string
         }
@@ -447,10 +489,15 @@ export type Database = {
           created_at: string
           etablissement_id: string
           id: string
+          heures_facturees: number | null
           marge: number
+          marge_apres_cet: number | null
           period_code: string
           source: string
           statut_cloture: string
+          prime_beneficiaire_id: string | null
+          prime_montant: number | null
+          prime_taux: number | null
           updated_at: string
           user_id: string
         }
@@ -463,10 +510,15 @@ export type Database = {
           created_at?: string
           etablissement_id: string
           id?: string
+          heures_facturees?: number | null
           marge?: number
+          marge_apres_cet?: number | null
           period_code: string
           source?: string
           statut_cloture?: string
+          prime_beneficiaire_id?: string | null
+          prime_montant?: number | null
+          prime_taux?: number | null
           updated_at?: string
           user_id: string
         }
@@ -479,10 +531,15 @@ export type Database = {
           created_at?: string
           etablissement_id?: string
           id?: string
+          heures_facturees?: number | null
           marge?: number
+          marge_apres_cet?: number | null
           period_code?: string
           source?: string
           statut_cloture?: string
+          prime_beneficiaire_id?: string | null
+          prime_montant?: number | null
+          prime_taux?: number | null
           updated_at?: string
           user_id?: string
         }
@@ -499,6 +556,13 @@ export type Database = {
             columns: ["etablissement_id"]
             isOneToOne: false
             referencedRelation: "establishments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "performances_clients_prime_beneficiaire_id_fkey"
+            columns: ["prime_beneficiaire_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
           {
@@ -679,7 +743,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      crm_commission_totals_v1: {
+        Args: { p_user_id?: string | null; p_year: number }
+        Returns: { commission: number; period_code: string }[]
+      }
     }
     Enums: {
       action_status: "effectue" | "a_venir" | "a_relancer"
