@@ -38,7 +38,7 @@ test("le CA réel conserve l'attribution des périodes existantes", () => {
 
 test("le CRM affiche et historise l'attribution commerciale", () => {
   const ui = read("src/components/EstablishmentSheet.tsx");
-  const migration = read("supabase/migrations/20261123164449_unify_commercial_assignment.sql");
+  const migration = read("supabase/migrations/20261123165220_unify_commercial_assignment.sql");
   assert.ok(ui.includes("Commercial attribué"));
   assert.ok(ui.includes('onChange({ commercial_id: v === "none" ? null : v })'));
   assert.ok(!ui.includes("Commercial déclencheur (pour reporting)"));

@@ -1,6 +1,10 @@
 # Publication securisee — CRM V1 financier
 
-Etat : code prepare uniquement. Aucune migration appliquee, aucune Edge Function deployee, aucune planification activee.
+La migration financière V1, ses fonctions Edge et la planification attendent la fenêtre de publication commune avec l’App Agence.
+
+La migration d’attribution commerciale est déjà appliquée. Son SQL dans le journal Supabase est identique au fichier du dépôt, désormais nommé `20261123165220_unify_commercial_assignment.sql`. L’ancien identifiant local était `20261123164449`.
+
+Le journal distant présente d’autres écarts historiques. Pour cette publication, exécuter uniquement le fichier V1 `20261124120000_crm_v1_financial_alignment.sql` sur le projet CRM et enregistrer cette version après succès si le mécanisme d’application ciblée ne l’a pas déjà fait. Un `db push` global doit attendre la réconciliation de l’ensemble des versions.
 
 ## 1. Pre-controles obligatoires
 
@@ -57,15 +61,12 @@ Tant que ces champs ne sont pas disponibles, ne lancer aucune synchronisation : 
 
 ## 4. Ordre de publication
 
-1. Validation explicite de Fabien sur le comptage et la comparaison des primes historiques.
-2. Application de la migration CRM uniquement.
-3. Regeneration des types Supabase et comparaison avec `src/integrations/supabase/types.ts`.
-4. Deploiement de `agency-crm-bridge` et tests lecture (`get_commission_rules`, rapport annuel).
-5. Deploiement de `sync-agency-actuals`, sans planification, puis test cible sur un client et un mois.
-6. Recette rapprochement assiste : recherche, annulation, confirmation, doublon refuse.
-7. Recette commune Cursor/Codex sur octobre 2026.
-8. Creation de `SYNC_AGENCY_ACTUALS_CRON_SECRET` et activation de l'appel quotidien avec le meme secret dans `x-adaptel-cron-secret`.
-9. Controle des journaux `agency_bridge_journal` apres le premier passage.
+1. Confirmer que l’App Agence est prête et valider le comptage des primes historiques.
+2. Appliquer les migrations V1 ciblées sur chaque projet avant leurs fonctions Edge. Vérifier le journal CRM, puis comparer les types régénérés à `src/integrations/supabase/types.ts`.
+3. Déployer `agency-crm-bridge` avant le pont sortant Agence qui l’appelle. Tester `get_commission_rules` et le rapport annuel.
+4. Déployer `crm-agence-entrant` côté Agence et vérifier les deux contrats de la section 3. Déployer ensuite `sync-agency-actuals` avec la planification désactivée.
+5. Tester un client sur un mois, le rejet d’un lot invalide et le rapprochement assisté. Publier les interfaces lorsque leurs dépendances SQL et Edge sont disponibles.
+6. Terminer la recette commune sur octobre 2026 avant d’activer la synchronisation quotidienne. Configurer `SYNC_AGENCY_ACTUALS_CRON_SECRET` et contrôler `agency_bridge_journal` après le premier passage.
 
 ## 5. Criteres de non-publication
 
