@@ -283,9 +283,9 @@ Deno.serve(async (request) => {
       const agencyClientId = clean(actual?.agencyClientId);
       const periodCode = clean(actual?.periodCode);
       const revenue = Number(actual?.revenue);
-      const marginBeforeCet = Number(actual?.marginBeforeCet);
-      const marginAfterCet = Number(actual?.marginAfterCet);
-      const hoursBilled = Number(actual?.hoursBilled);
+      const marginBeforeCet = actual?.marginBeforeCet;
+      const marginAfterCet = actual?.marginAfterCet;
+      const hoursBilled = actual?.hoursBilled;
       const confirmedAt = clean(actual?.confirmedAt);
       const link = linkByAgencyId.get(agencyClientId);
       if (!link || !validPeriod(periodCode) || !Number.isFinite(revenue) || revenue < 0

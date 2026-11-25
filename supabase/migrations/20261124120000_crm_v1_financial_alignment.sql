@@ -172,9 +172,7 @@ begin
 
   -- Une ligne deja confirmee conserve son snapshot, meme si le bareme,
   -- l'attribution ou le beneficiaire courant change ensuite.
-  if tg_op = 'UPDATE'
-     and old.statut_cloture = 'confirme'
-     and old.prime_montant is not null then
+  if tg_op = 'UPDATE' and old.statut_cloture = 'confirme' then
     new.prime_beneficiaire_id := old.prime_beneficiaire_id;
     new.prime_taux := old.prime_taux;
     new.prime_montant := old.prime_montant;
@@ -202,10 +200,6 @@ revoke all on function public.freeze_performance_commission_v1()
 
 drop trigger if exists freeze_performance_commission_v1
   on public.performances_clients;
-create trigger freeze_performance_commission_v1
-  before insert or update of statut_cloture, marge, etablissement_id, period_code
-  on public.performances_clients
-  for each row execute function public.freeze_performance_commission_v1();
 
 create or replace function public.protect_agency_performance_v1()
 returns trigger
@@ -277,6 +271,13 @@ from public.establishments establishment
 where performance.etablissement_id = establishment.id
   and performance.statut_cloture = 'confirme'
   and performance.prime_montant is null;
+
+-- Activer le gel après avoir renseigné les snapshots historiques.
+create trigger freeze_performance_commission_v1
+  before insert or update of statut_cloture, marge, etablissement_id, period_code,
+    prime_beneficiaire_id, prime_taux, prime_montant
+  on public.performances_clients
+  for each row execute function public.freeze_performance_commission_v1();
 
 create index if not exists performances_clients_prime_beneficiary_idx
   on public.performances_clients (prime_beneficiaire_id, period_code)
