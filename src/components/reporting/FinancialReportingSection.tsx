@@ -78,7 +78,7 @@ export function FinancialReportingSection() {
     { label: `Chiffre d’affaires validé ${year}`, value: currency(annual.actualCa), detail: `${annual.objectiveCa > 0 ? `${caProgress}% de ${currency(annual.objectiveCa)}` : "Objectif à définir"}${annualEvolution !== null ? ` · ${annualEvolution >= 0 ? "+" : ""}${annualEvolution.toFixed(1)} % vs N-1` : ""}`, progress: Math.min(100, Math.max(0, caProgress)), icon: Euro },
     { label: `Marge ${year}`, value: currency(annual.actualMargin), detail: annual.objectiveMargin > 0 ? `${marginProgress}% de ${currency(annual.objectiveMargin)}` : "Objectif à définir", progress: Math.min(100, Math.max(0, marginProgress)), icon: Landmark },
     { label: "Taux de marge", value: `${marginRate.toFixed(1)} %`, detail: "Marge réelle / CA réel", progress: null, icon: Percent },
-    { label: "Prime confirmée", value: currency(annual.prime), detail: "Snapshot figé sur la marge avant CET", progress: null, icon: BadgePercent },
+    { label: "Prime confirmée", value: currency(annual.prime), detail: "Figée à la clôture, sur la marge avant CET", progress: null, icon: BadgePercent },
     { label: "Clients contributeurs", value: String(annualClients), detail: `Avec un résultat en ${year}`, progress: null, icon: Users },
     { label: "Heures facturées", value: annual.hoursBilled.toLocaleString("fr-FR", { maximumFractionDigits: 2 }), detail: "Réels ERP confirmés", progress: null, icon: Users },
   ];

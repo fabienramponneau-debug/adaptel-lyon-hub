@@ -328,7 +328,7 @@ Deno.serve(async (request) => {
       return await respond({
         periodCode,
         scope: userId && userId !== "tous" ? { userId } : { allCommercials: true },
-        objectives: { revenue: sum(targets.data ?? [], "objectif_ca"), margin: sum(targets.data ?? [], "objectif_marge"), activity: actionObjectives },
+        objectives: { revenue: sum(targets.data ?? [], "objectif_ca"), margin: sum(targets.data ?? [], "objectif_marge"), activity: actionObjectives, marginReference: userId && userId !== "tous" ? ((targets.data ?? [])[0]?.reference_marge ?? "avant_cet") : null },
         commercialForecast: { revenue: sum(forecastRows, "chiffre_affaires_previsionnel"), margin: sum(forecastRows, "marge_previsionnelle") },
         planningEstimate: { revenue: sum(forecastRows, "chiffre_affaires_estime_planning"), margin: null },
         actuals: { revenue: actualRevenue, margin: actualMargin, hoursBilled, marginRate: actualRevenue > 0 ? actualMargin / actualRevenue : 0, confirmed: actualRows.length > 0 && actualRows.every((row) => row.statut_cloture === "confirme") },
