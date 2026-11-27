@@ -27,15 +27,18 @@ test("le CA planning suit uniquement commercial_id", () => {
 test("le CA réel conserve l'attribution des périodes existantes", () => {
   const source = read("supabase/functions/sync-agency-actuals/index.ts");
   assert.ok(source.includes('select("id, agency_client_id, commercial_id")'));
-  assert.ok(source.includes("user_id: link.commercial_id"));
+  assert.ok(source.includes("commercialForPeriod(link, periodCode)"));
+  assert.ok(source.includes("establishment_assignment_history"));
+  assert.ok(source.includes("user_id: historicalCommercialId"));
   assert.ok(source.includes("user_id: existing.user_id"));
-  assert.ok(!source.includes("client_triggered_by"));
+  const importBlock = source.slice(source.indexOf("const rows = []"), source.indexOf("const existingByKey"));
+  assert.ok(!importBlock.includes("client_triggered_by"));
   assert.ok(!source.includes("staleIds"));
 });
 
 test("le CRM affiche et historise l'attribution commerciale", () => {
   const ui = read("src/components/EstablishmentSheet.tsx");
-  const migration = read("supabase/migrations/20261123164449_unify_commercial_assignment.sql");
+  const migration = read("supabase/migrations/20261123165220_unify_commercial_assignment.sql");
   assert.ok(ui.includes("Commercial attribué"));
   assert.ok(ui.includes('onChange({ commercial_id: v === "none" ? null : v })'));
   assert.ok(!ui.includes("Commercial déclencheur (pour reporting)"));

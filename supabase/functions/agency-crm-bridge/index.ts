@@ -15,16 +15,6 @@ const nextPeriodStart = (periodCode: string) => {
   return next.toISOString().slice(0, 10);
 };
 const numberOrNull = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : null;
-const commissionRate = (periodCode: string, triggeredAt: string | null | undefined) => {
-  if (!triggeredAt) return 0;
-  const [periodYear, periodMonth] = periodCode.split("-").map(Number);
-  const triggered = new Date(triggeredAt);
-  const elapsedMonths = (periodYear - triggered.getUTCFullYear()) * 12 + (periodMonth - (triggered.getUTCMonth() + 1));
-  if (elapsedMonths < 0) return 0;
-  if (elapsedMonths < 12) return 0.07;
-  if (elapsedMonths < 24) return 0.04;
-  return 0.03;
-};
 const secureEqual = (left: string, right: string) => {
   const encoder = new TextEncoder();
   const a = encoder.encode(left);
@@ -220,7 +210,19 @@ Deno.serve(async (request) => {
       const revenue = numberOrNull(body?.objectiveRevenue);
       const margin = numberOrNull(body?.objectiveMargin);
       if (!userId || !validPeriod(periodCode) || revenue === null || revenue < 0 || margin === null || margin < 0) return await respond({ error: "Objectifs invalides." }, 400);
-      const { error } = await admin.from("objectifs_financiers").upsert({ user_id: userId, period_code: periodCode, objectif_ca: revenue, objectif_marge: margin }, { onConflict: "user_id,period_code" });
+      let marginReference = clean(body?.marginReference);
+      if (!marginReference) {
+        const { data: existingObjective, error: existingObjectiveError } = await admin
+          .from("objectifs_financiers")
+          .select("reference_marge")
+          .eq("user_id", userId)
+          .eq("period_code", periodCode)
+          .maybeSingle();
+        if (existingObjectiveError) throw existingObjectiveError;
+        marginReference = existingObjective?.reference_marge ?? "avant_cet";
+      }
+      if (!["avant_cet", "apres_cet"].includes(marginReference)) return await respond({ error: "Objectifs invalides." }, 400);
+      const { error } = await admin.from("objectifs_financiers").upsert({ user_id: userId, period_code: periodCode, objectif_ca: revenue, objectif_marge: margin, reference_marge: marginReference }, { onConflict: "user_id,period_code" });
       if (error) throw error;
       if (body?.activityObjectives && typeof body.activityObjectives === "object") {
         const activityTypes = ["visite", "rdv", "phoning", "mailing"];
@@ -240,15 +242,54 @@ Deno.serve(async (request) => {
       return await respond({ ok: true });
     }
 
+    if (operation === "get_commission_rules") {
+      const { data, error } = await admin
+        .from("commission_rules")
+        .select("effective_from, month_from, month_to, base_rate, bonus_rate, margin_basis, actor_agency_user_id, actor_name, created_at")
+        .order("effective_from", { ascending: false })
+        .order("month_from", { ascending: true });
+      if (error) throw error;
+      return await respond({ rules: data ?? [] });
+    }
+
+    if (operation === "set_commission_rules") {
+      const effectiveFrom = clean(body?.effectiveFrom);
+      const rules = Array.isArray(body?.rules) ? body.rules : [];
+      const normalized = rules.map((rule) => ({
+        monthFrom: Number(rule?.monthFrom),
+        monthTo: rule?.monthTo == null ? null : Number(rule.monthTo),
+        baseRate: numberOrNull(rule?.baseRate),
+        bonusRate: numberOrNull(rule?.bonusRate) ?? 0,
+      }));
+      const expectedTiers = [[1, 12], [13, 24], [25, null]];
+      const validRules = normalized.length === 3 && normalized.every((rule, index) =>
+        rule.monthFrom === expectedTiers[index][0]
+        && rule.monthTo === expectedTiers[index][1]
+        && rule.baseRate !== null && rule.baseRate >= 0 && rule.baseRate <= 1
+        && rule.bonusRate >= 0 && rule.bonusRate <= 1
+      );
+      if (!validPeriod(effectiveFrom) || !validRules) {
+        return await respond({ error: "Barème de prime invalide." }, 400);
+      }
+      const { data, error } = await admin.rpc("insert_commission_rules_v1", {
+        p_effective_from: effectiveFrom,
+        p_rules: normalized,
+        p_actor_agency_user_id: actorAgencyUserId,
+        p_actor_name: actorName,
+      });
+      if (error) return await respond({ error: error.message }, 409);
+      return await respond({ rules: data ?? [] });
+    }
+
     if (operation === "get_crm_dashboard") {
       const userId = clean(body?.userId);
       const periodCode = clean(body?.periodCode);
       if (!validPeriod(periodCode)) return await respond({ error: "Mois obligatoire." }, 400);
       const startDate = `${periodCode}-01`;
       const endDate = nextPeriodStart(periodCode);
-      let targetsQuery = admin.from("objectifs_financiers").select("objectif_ca, objectif_marge").eq("period_code", periodCode);
+      let targetsQuery = admin.from("objectifs_financiers").select("user_id, objectif_ca, objectif_marge, reference_marge").eq("period_code", periodCode);
       let forecastsQuery = admin.from("previsions_clients").select("chiffre_affaires_previsionnel, marge_previsionnelle, chiffre_affaires_estime_planning, marge_estimee_planning").eq("period_code", periodCode);
-      let actualsQuery = admin.from("performances_clients").select("chiffre_affaires, marge, statut_cloture").eq("period_code", periodCode);
+      let actualsQuery = admin.from("performances_clients").select("user_id, chiffre_affaires, marge, marge_apres_cet, heures_facturees, statut_cloture").eq("period_code", periodCode);
       let actionsQuery = admin.from("actions").select("type").eq("statut_action", "effectue").gte("date_action", startDate).lt("date_action", endDate);
       let activityTargetsQuery = admin.from("objectifs_actions").select("action_type, objectif").eq("period_type", "mois").eq("period_code", periodCode);
       let prospectsQuery = admin.from("establishments").select("id", { count: "exact", head: true }).eq("statut", "prospect").gte("created_at", startDate).lt("created_at", endDate);
@@ -281,14 +322,16 @@ Deno.serve(async (request) => {
       const actionObjectives = { phoning: 0, mailing: 0, visite: 0, rdv: 0 };
       for (const objective of activityTargets.data ?? []) if (objective.action_type in actionObjectives) actionObjectives[objective.action_type] += Number(objective.objectif ?? 0);
       const actualRevenue = sum(confirmedActualRows, "chiffre_affaires");
-      const actualMargin = sum(confirmedActualRows, "marge");
+      const referenceByUser = new Map((targets.data ?? []).map((target) => [target.user_id, target.reference_marge ?? "avant_cet"]));
+      const actualMargin = confirmedActualRows.reduce((total, row) => total + Number(referenceByUser.get(row.user_id) === "apres_cet" ? row.marge_apres_cet ?? 0 : row.marge ?? 0), 0);
+      const hoursBilled = sum(confirmedActualRows, "heures_facturees");
       return await respond({
         periodCode,
         scope: userId && userId !== "tous" ? { userId } : { allCommercials: true },
-        objectives: { revenue: sum(targets.data ?? [], "objectif_ca"), margin: sum(targets.data ?? [], "objectif_marge"), activity: actionObjectives },
+        objectives: { revenue: sum(targets.data ?? [], "objectif_ca"), margin: sum(targets.data ?? [], "objectif_marge"), activity: actionObjectives, marginReference: userId && userId !== "tous" ? ((targets.data ?? [])[0]?.reference_marge ?? "avant_cet") : null },
         commercialForecast: { revenue: sum(forecastRows, "chiffre_affaires_previsionnel"), margin: sum(forecastRows, "marge_previsionnelle") },
         planningEstimate: { revenue: sum(forecastRows, "chiffre_affaires_estime_planning"), margin: null },
-        actuals: { revenue: actualRevenue, margin: actualMargin, marginRate: actualRevenue > 0 ? actualMargin / actualRevenue : 0, confirmed: actualRows.length > 0 && actualRows.every((row) => row.statut_cloture === "confirme") },
+        actuals: { revenue: actualRevenue, margin: actualMargin, hoursBilled, marginRate: actualRevenue > 0 ? actualMargin / actualRevenue : 0, confirmed: actualRows.length > 0 && actualRows.every((row) => row.statut_cloture === "confirme") },
         activity: actionCounts,
         acquisition: { newProspects: prospects.count ?? 0, newClients: clients.count ?? 0 },
       });
@@ -310,8 +353,8 @@ Deno.serve(async (request) => {
       if (establishmentsError) throw establishmentsError;
       const establishmentIds = (establishments ?? []).map((item) => item.id);
       const lastActionByEstablishment = new Map<string, string>();
-      for (let offset = 0; offset < establishmentIds.length; offset += 1000) {
-        const ids = establishmentIds.slice(offset, offset + 1000);
+      for (let offset = 0; offset < establishmentIds.length; offset += 100) {
+        const ids = establishmentIds.slice(offset, offset + 100);
         if (ids.length === 0) continue;
         const { data: actions, error: actionsError } = await admin.rpc("crm_last_action_dates", {
           p_establishment_ids: ids,
@@ -338,28 +381,20 @@ Deno.serve(async (request) => {
       const end = `${year}-12`;
       const previousStart = `${year - 1}-01`;
       const previousEnd = `${year - 1}-12`;
-      let targetsQuery = admin.from("objectifs_financiers").select("period_code, objectif_ca, objectif_marge").gte("period_code", start).lte("period_code", end).range(0, 4999);
+      let targetsQuery = admin.from("objectifs_financiers").select("user_id, period_code, objectif_ca, objectif_marge, reference_marge").gte("period_code", start).lte("period_code", end).range(0, 4999);
       let forecastsQuery = admin.from("previsions_clients").select("period_code, chiffre_affaires_previsionnel, chiffre_affaires_estime_planning").gte("period_code", start).lte("period_code", end).range(0, 4999);
-      let currentActualsQuery = admin.from("performances_clients").select("period_code, etablissement_id, chiffre_affaires, marge, statut_cloture").gte("period_code", start).lte("period_code", end).range(0, 4999);
+      let currentActualsQuery = admin.from("performances_clients").select("user_id, period_code, etablissement_id, chiffre_affaires, marge, marge_apres_cet, heures_facturees, statut_cloture").gte("period_code", start).lte("period_code", end).range(0, 4999);
+      let commissionsQuery = admin.from("performances_clients").select("period_code, prime_montant, statut_cloture").gte("period_code", start).lte("period_code", end).eq("statut_cloture", "confirme").range(0, 4999);
       let previousActualsQuery = admin.from("performances_clients").select("period_code, chiffre_affaires").gte("period_code", previousStart).lte("period_code", previousEnd).eq("statut_cloture", "confirme").range(0, 4999);
       if (userId && userId !== "tous") {
         targetsQuery = targetsQuery.eq("user_id", userId);
         forecastsQuery = forecastsQuery.eq("user_id", userId);
         currentActualsQuery = currentActualsQuery.eq("user_id", userId);
+        commissionsQuery = commissionsQuery.eq("prime_beneficiaire_id", userId);
         previousActualsQuery = previousActualsQuery.eq("user_id", userId);
       }
-      const [targets, forecasts, currentActuals, previousActuals] = await Promise.all([targetsQuery, forecastsQuery, currentActualsQuery, previousActualsQuery]);
-      for (const result of [targets, forecasts, currentActuals, previousActuals]) if (result.error) throw result.error;
-
-      const establishmentIds = [...new Set((currentActuals.data ?? []).map((row) => row.etablissement_id))];
-      const triggeredAtByEstablishment = new Map<string, string | null>();
-      for (let offset = 0; offset < establishmentIds.length; offset += 500) {
-        const ids = establishmentIds.slice(offset, offset + 500);
-        if (ids.length === 0) continue;
-        const { data: establishments, error } = await admin.from("establishments").select("id, client_triggered_at").in("id", ids);
-        if (error) throw error;
-        for (const establishment of establishments ?? []) triggeredAtByEstablishment.set(establishment.id, establishment.client_triggered_at);
-      }
+      const [targets, forecasts, currentActuals, commissions, previousActuals] = await Promise.all([targetsQuery, forecastsQuery, currentActualsQuery, commissionsQuery, previousActualsQuery]);
+      for (const result of [targets, forecasts, currentActuals, commissions, previousActuals]) if (result.error) throw result.error;
 
       const sumByPeriod = (rows: unknown[], periodCode: string, key: string) => rows
         .filter((row) => row.period_code === periodCode)
@@ -371,11 +406,13 @@ Deno.serve(async (request) => {
         const allActualRows = (currentActuals.data ?? []).filter((row) => row.period_code === periodCode);
         const confirmedRows = allActualRows.filter((row) => row.statut_cloture === "confirme");
         const actualRevenue = confirmedRows.reduce((total, row) => total + Number(row.chiffre_affaires ?? 0), 0);
-        const actualMargin = confirmedRows.reduce((total, row) => total + Number(row.marge ?? 0), 0);
-        const commission = confirmedRows.reduce((total, row) => {
-          const rate = commissionRate(periodCode, triggeredAtByEstablishment.get(row.etablissement_id));
-          return total + Math.max(0, Number(row.marge ?? 0)) * rate;
-        }, 0);
+        const periodTargets = (targets.data ?? []).filter((row) => row.period_code === periodCode);
+        const referenceByUser = new Map(periodTargets.map((target) => [target.user_id, target.reference_marge ?? "avant_cet"]));
+        const actualMarginBeforeCet = confirmedRows.reduce((total, row) => total + Number(row.marge ?? 0), 0);
+        const actualMarginAfterCet = confirmedRows.reduce((total, row) => total + Number(row.marge_apres_cet ?? 0), 0);
+        const actualMargin = confirmedRows.reduce((total, row) => total + Number(referenceByUser.get(row.user_id) === "apres_cet" ? row.marge_apres_cet ?? 0 : row.marge ?? 0), 0);
+        const hoursBilled = confirmedRows.reduce((total, row) => total + Number(row.heures_facturees ?? 0), 0);
+        const commission = sumByPeriod(commissions.data ?? [], periodCode, "prime_montant");
         return {
           periodCode,
           objectiveRevenue: sumByPeriod(targets.data ?? [], periodCode, "objectif_ca"),
@@ -384,6 +421,9 @@ Deno.serve(async (request) => {
           planningRevenue: sumByPeriod(forecasts.data ?? [], periodCode, "chiffre_affaires_estime_planning"),
           actualRevenue,
           actualMargin,
+          actualMarginBeforeCet,
+          actualMarginAfterCet,
+          hoursBilled,
           confirmed: allActualRows.length > 0 && allActualRows.every((row) => row.statut_cloture === "confirme"),
           previousYearRevenue: sumByPeriod(previousActuals.data ?? [], previousPeriodCode, "chiffre_affaires"),
           commission,

@@ -9,20 +9,10 @@ import { Label } from "@/components/ui/label";
 import { useUserView } from "@/contexts/UserViewContext";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-interface MonthSummary { month: number; objectiveCa: number; objectiveMargin: number; forecastCa: number; forecastMargin: number; planningEstimateCa: number; planningEstimateMargin: number; actualCa: number; actualMargin: number; previousYearCa: number; prime: number; clients: Set<string>; confirmed: boolean; actualRows: number; confirmedRows: number }
+interface MonthSummary { month: number; objectiveCa: number; objectiveMargin: number; forecastCa: number; forecastMargin: number; planningEstimateCa: number; planningEstimateMargin: number; actualCa: number; actualMargin: number; hoursBilled: number; previousYearCa: number; prime: number; clients: Set<string>; marginReferences: Set<string>; confirmed: boolean; actualRows: number; confirmedRows: number }
 const MONTHS = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
 const currency = (value: number) => value.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
-const emptyRows = (): MonthSummary[] => MONTHS.map((_, index) => ({ month: index + 1, objectiveCa: 0, objectiveMargin: 0, forecastCa: 0, forecastMargin: 0, planningEstimateCa: 0, planningEstimateMargin: 0, actualCa: 0, actualMargin: 0, previousYearCa: 0, prime: 0, clients: new Set<string>(), confirmed: false, actualRows: 0, confirmedRows: 0 }));
-const commissionRate = (periodCode: string, triggeredAt?: string | null) => {
-  if (!triggeredAt) return 0;
-  const [periodYear, periodMonth] = periodCode.split("-").map(Number);
-  const triggered = new Date(triggeredAt);
-  const elapsedMonths = (periodYear - triggered.getFullYear()) * 12 + (periodMonth - (triggered.getMonth() + 1));
-  if (elapsedMonths < 0) return 0;
-  if (elapsedMonths < 12) return 0.07;
-  if (elapsedMonths < 24) return 0.04;
-  return 0.03;
-};
+const emptyRows = (): MonthSummary[] => MONTHS.map((_, index) => ({ month: index + 1, objectiveCa: 0, objectiveMargin: 0, forecastCa: 0, forecastMargin: 0, planningEstimateCa: 0, planningEstimateMargin: 0, actualCa: 0, actualMargin: 0, hoursBilled: 0, previousYearCa: 0, prime: 0, clients: new Set<string>(), marginReferences: new Set<string>(), confirmed: false, actualRows: 0, confirmedRows: 0 }));
 
 export function FinancialReportingSection() {
   const { currentRole, currentUserId, selectedUserId, users } = useUserView();
@@ -44,16 +34,19 @@ export function FinancialReportingSection() {
     const end = `${year}-12`;
     const previousStart = `${year - 1}-01`;
     const previousEnd = `${year - 1}-12`;
-    let targets = supabase.from("objectifs_financiers").select("period_code, objectif_ca, objectif_marge").gte("period_code", start).lte("period_code", end);
+    let targets = supabase.from("objectifs_financiers").select("user_id, period_code, objectif_ca, objectif_marge, reference_marge").gte("period_code", start).lte("period_code", end);
     let forecasts = supabase.from("previsions_clients").select("period_code, chiffre_affaires_previsionnel, marge_previsionnelle, chiffre_affaires_estime_planning, marge_estimee_planning").gte("period_code", start).lte("period_code", end);
-    let actuals = supabase.from("performances_clients").select("period_code, etablissement_id, chiffre_affaires, marge, statut_cloture, establishment:establishments(client_triggered_at)").gte("period_code", start).lte("period_code", end);
+    let actuals = supabase.from("performances_clients").select("user_id, period_code, etablissement_id, chiffre_affaires, marge, marge_apres_cet, heures_facturees, statut_cloture").gte("period_code", start).lte("period_code", end);
+    const commissions = supabase.rpc("crm_commission_totals_v1", { p_year: year, p_user_id: activeUserId === "tous" ? null : activeUserId });
     let previousActuals = supabase.from("performances_clients").select("period_code, chiffre_affaires, statut_cloture").gte("period_code", previousStart).lte("period_code", previousEnd);
     if (activeUserId !== "tous") { targets = targets.eq("user_id", activeUserId); forecasts = forecasts.eq("user_id", activeUserId); actuals = actuals.eq("user_id", activeUserId); previousActuals = previousActuals.eq("user_id", activeUserId); }
-    const [targetResult, forecastResult, actualResult, previousActualResult] = await Promise.all([targets, forecasts, actuals, previousActuals]);
+    const [targetResult, forecastResult, actualResult, commissionResult, previousActualResult] = await Promise.all([targets, forecasts, actuals, commissions, previousActuals]);
     const next = emptyRows();
-    for (const item of targetResult.data ?? []) { const row = next[Number(item.period_code.slice(5, 7)) - 1]; if (row) { row.objectiveCa += Number(item.objectif_ca); row.objectiveMargin += Number(item.objectif_marge); } }
+    const marginReferenceByUserPeriod = new Map<string, string>();
+    for (const item of targetResult.data ?? []) { const row = next[Number(item.period_code.slice(5, 7)) - 1]; if (row) { const reference = item.reference_marge ?? "avant_cet"; row.objectiveCa += Number(item.objectif_ca); row.objectiveMargin += Number(item.objectif_marge); row.marginReferences.add(reference); marginReferenceByUserPeriod.set(`${item.user_id}|${item.period_code}`, reference); } }
     for (const item of forecastResult.data ?? []) { const row = next[Number(item.period_code.slice(5, 7)) - 1]; if (row) { row.forecastCa += Number(item.chiffre_affaires_previsionnel); row.forecastMargin += Number(item.marge_previsionnelle); row.planningEstimateCa += Number(item.chiffre_affaires_estime_planning); row.planningEstimateMargin += Number(item.marge_estimee_planning); } }
-    for (const item of actualResult.data ?? []) { const row = next[Number(item.period_code.slice(5, 7)) - 1]; if (row) { row.actualRows += 1; if (item.statut_cloture === "confirme") { const establishment = Array.isArray(item.establishment) ? item.establishment[0] : item.establishment; const margin = Number(item.marge); row.confirmedRows += 1; row.actualCa += Number(item.chiffre_affaires); row.actualMargin += margin; row.prime += Math.max(0, margin) * commissionRate(item.period_code, establishment?.client_triggered_at); row.clients.add(item.etablissement_id); } } }
+    for (const item of actualResult.data ?? []) { const row = next[Number(item.period_code.slice(5, 7)) - 1]; if (row) { row.actualRows += 1; if (item.statut_cloture === "confirme") { const reference = marginReferenceByUserPeriod.get(`${item.user_id}|${item.period_code}`) ?? "avant_cet"; row.marginReferences.add(reference); row.confirmedRows += 1; row.actualCa += Number(item.chiffre_affaires); row.actualMargin += reference === "apres_cet" ? Number(item.marge_apres_cet ?? 0) : Number(item.marge); row.hoursBilled += Number(item.heures_facturees ?? 0); row.clients.add(item.etablissement_id); } } }
+    for (const item of commissionResult.data ?? []) { const row = next[Number(item.period_code.slice(5, 7)) - 1]; if (row) row.prime += Number(item.commission ?? 0); }
     for (const item of previousActualResult.data ?? []) { if (item.statut_cloture !== "confirme") continue; const row = next[Number(item.period_code.slice(5, 7)) - 1]; if (row) row.previousYearCa += Number(item.chiffre_affaires); }
     for (const row of next) row.confirmed = row.actualRows > 0 && row.actualRows === row.confirmedRows;
     setRows(next);
@@ -75,7 +68,7 @@ export function FinancialReportingSection() {
     await load();
   };
 
-  const annual = useMemo(() => rows.reduce((acc, row) => ({ objectiveCa: acc.objectiveCa + row.objectiveCa, objectiveMargin: acc.objectiveMargin + row.objectiveMargin, forecastCa: acc.forecastCa + row.forecastCa, planningEstimateCa: acc.planningEstimateCa + row.planningEstimateCa, actualCa: acc.actualCa + row.actualCa, actualMargin: acc.actualMargin + row.actualMargin, previousYearCa: acc.previousYearCa + row.previousYearCa, prime: acc.prime + row.prime }), { objectiveCa: 0, objectiveMargin: 0, forecastCa: 0, planningEstimateCa: 0, actualCa: 0, actualMargin: 0, previousYearCa: 0, prime: 0 }), [rows]);
+  const annual = useMemo(() => rows.reduce((acc, row) => ({ objectiveCa: acc.objectiveCa + row.objectiveCa, objectiveMargin: acc.objectiveMargin + row.objectiveMargin, forecastCa: acc.forecastCa + row.forecastCa, planningEstimateCa: acc.planningEstimateCa + row.planningEstimateCa, actualCa: acc.actualCa + row.actualCa, actualMargin: acc.actualMargin + row.actualMargin, hoursBilled: acc.hoursBilled + row.hoursBilled, previousYearCa: acc.previousYearCa + row.previousYearCa, prime: acc.prime + row.prime }), { objectiveCa: 0, objectiveMargin: 0, forecastCa: 0, planningEstimateCa: 0, actualCa: 0, actualMargin: 0, hoursBilled: 0, previousYearCa: 0, prime: 0 }), [rows]);
   const annualClients = useMemo(() => new Set(rows.flatMap((row) => [...row.clients])).size, [rows]);
   const caProgress = annual.objectiveCa > 0 ? Math.round((annual.actualCa / annual.objectiveCa) * 100) : 0;
   const marginProgress = annual.objectiveMargin > 0 ? Math.round((annual.actualMargin / annual.objectiveMargin) * 100) : 0;
@@ -85,8 +78,9 @@ export function FinancialReportingSection() {
     { label: `Chiffre d’affaires validé ${year}`, value: currency(annual.actualCa), detail: `${annual.objectiveCa > 0 ? `${caProgress}% de ${currency(annual.objectiveCa)}` : "Objectif à définir"}${annualEvolution !== null ? ` · ${annualEvolution >= 0 ? "+" : ""}${annualEvolution.toFixed(1)} % vs N-1` : ""}`, progress: Math.min(100, Math.max(0, caProgress)), icon: Euro },
     { label: `Marge ${year}`, value: currency(annual.actualMargin), detail: annual.objectiveMargin > 0 ? `${marginProgress}% de ${currency(annual.objectiveMargin)}` : "Objectif à définir", progress: Math.min(100, Math.max(0, marginProgress)), icon: Landmark },
     { label: "Taux de marge", value: `${marginRate.toFixed(1)} %`, detail: "Marge réelle / CA réel", progress: null, icon: Percent },
-    { label: "Prime calculée", value: currency(annual.prime), detail: "Uniquement sur les marges validées", progress: null, icon: BadgePercent },
+    { label: "Prime confirmée", value: currency(annual.prime), detail: "Figée à la clôture, sur la marge avant CET", progress: null, icon: BadgePercent },
     { label: "Clients contributeurs", value: String(annualClients), detail: `Avec un résultat en ${year}`, progress: null, icon: Users },
+    { label: "Heures facturées", value: annual.hoursBilled.toLocaleString("fr-FR", { maximumFractionDigits: 2 }), detail: "Réels ERP confirmés", progress: null, icon: Users },
   ];
   const chartData = rows.map((row, index) => ({ month: MONTHS[index].slice(0, 3), objectif: row.objectiveCa, prevision: row.forecastCa, planning: row.planningEstimateCa, reel: row.actualCa, nMoins1: row.previousYearCa }));
 

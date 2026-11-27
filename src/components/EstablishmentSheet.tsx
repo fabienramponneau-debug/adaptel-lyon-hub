@@ -11,6 +11,7 @@ import { EstablishmentHeader } from "./EstablishmentHeader";
 import EstablishmentContacts from "./EstablishmentContacts";
 import { EstablishmentTimeline } from "./EstablishmentTimeline";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -28,6 +29,8 @@ import {
   ArrowDownRight,
   ArrowRight,
   CheckCircle,
+  Link2,
+  Search,
 } from "lucide-react";
 import {
   searchCitySuggestions,
@@ -121,6 +124,11 @@ export const EstablishmentSheet = ({
   const [commercials, setCommercials] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState<"idle" | "saving">("idle");
+  const [agencySearch, setAgencySearch] = useState("");
+  const [agencyMatches, setAgencyMatches] = useState<any[]>([]);
+  const [agencySearching, setAgencySearching] = useState(false);
+  const [agencyLinkingId, setAgencyLinkingId] = useState<string | null>(null);
+  const [agencyError, setAgencyError] = useState<string | null>(null);
   const [externalEditActionId, setExternalEditActionId] =
     useState<string | null>(null);
 
@@ -332,6 +340,9 @@ export const EstablishmentSheet = ({
       setCitySuggestions([]);
       setAllEstablishments([]);
       setDuplicateMatches([]);
+      setAgencySearch("");
+      setAgencyMatches([]);
+      setAgencyError(null);
     }
   }, [open, establishmentId]);
 
@@ -696,6 +707,46 @@ export const EstablishmentSheet = ({
     await handleCreateSave();
   };
 
+  const searchAgencyClients = async () => {
+    const q = (agencySearch || model?.nom || "").trim();
+    if (q.length < 2) return;
+    setAgencySearching(true);
+    setAgencyError(null);
+    const { data, error } = await supabase.functions.invoke("sync-agency-actuals", {
+      body: { operation: "search_agency_clients", q },
+    });
+    setAgencySearching(false);
+    if (error || data?.error) {
+      setAgencyError(data?.error ?? error?.message ?? "Recherche agence impossible.");
+      return;
+    }
+    setAgencyMatches(Array.isArray(data?.clients) ? data.clients : []);
+  };
+
+  const linkAgencyClient = async (client: any) => {
+    if (!currentEstablishmentId) return;
+    const confirmed = window.confirm(`Rapprocher cette fiche CRM avec « ${client.nom} » (${client.erpClientCode}) ?\n\nCette action ne change ni le commercial attribué ni le bénéficiaire des primes.`);
+    if (!confirmed) return;
+    setAgencyLinkingId(client.agencyClientId);
+    setAgencyError(null);
+    const { data, error } = await supabase.functions.invoke("sync-agency-actuals", {
+      body: {
+        operation: "link_agency_client",
+        establishmentId: currentEstablishmentId,
+        agencyClientId: client.agencyClientId,
+        erpClientCode: client.erpClientCode,
+      },
+    });
+    setAgencyLinkingId(null);
+    if (error || data?.error) {
+      setAgencyError(data?.error ?? error?.message ?? "Rapprochement impossible.");
+      return;
+    }
+    setModel((current: any) => current ? { ...current, ...data.client } : current);
+    setAgencyMatches([]);
+    onUpdate();
+  };
+
   // Option courante de potentiel (badge)
   const currentPotentialOption: PotentialOption | null = model?.potential_rating
     ? POTENTIAL_OPTIONS.find((opt) => opt.value === model.potential_rating) ||
@@ -802,6 +853,16 @@ export const EstablishmentSheet = ({
             <div className="grid grid-cols-1 lg:grid-cols-[520px,1fr] gap-6">
               {/* Colonne gauche */}
               <div className="space-y-6">
+                {model.statut === "client" && !model.agency_client_id && currentEstablishmentId && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-5 shadow-sm">
+                    <h3 className="flex items-center gap-2 font-semibold text-slate-900"><Link2 className="h-5 w-5 text-[#840404]" />Rapprochement avec l’app agence</h3>
+                    <p className="mt-1 text-sm text-slate-600">Recherchez un client existant par nom ou matricule. Aucun client agence ne sera créé automatiquement.</p>
+                    <div className="mt-3 flex gap-2"><Input value={agencySearch} onChange={(event) => setAgencySearch(event.target.value)} placeholder={model.nom || "Nom ou matricule"} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchAgencyClients(); } }} /><Button type="button" variant="outline" onClick={() => void searchAgencyClients()} disabled={agencySearching}><Search className="mr-2 h-4 w-4" />{agencySearching ? "Recherche…" : "Rechercher"}</Button></div>
+                    {agencyError && <p className="mt-2 text-sm text-red-700">{agencyError}</p>}
+                    {agencyMatches.length > 0 && <div className="mt-3 space-y-2">{agencyMatches.map((client) => <div key={client.agencyClientId} className="flex items-center justify-between gap-3 rounded-lg border bg-white p-3"><div><p className="font-medium text-slate-900">{client.nom}</p><p className="text-xs text-slate-500">Matricule {client.erpClientCode}{client.ville ? ` · ${client.ville}` : ""}{client.siret ? ` · SIRET ${client.siret}` : ""}</p></div><Button type="button" size="sm" onClick={() => void linkAgencyClient(client)} disabled={agencyLinkingId !== null}>{agencyLinkingId === client.agencyClientId ? "Liaison…" : "Rapprocher"}</Button></div>)}</div>}
+                    {!agencySearching && agencySearch && agencyMatches.length === 0 && !agencyError && <p className="mt-2 text-sm text-slate-500">Aucun résultat. La fiche reste simplement non rapprochée.</p>}
+                  </div>
+                )}
                 {/* Informations */}
                 <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
                   <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2 text-[15px]">

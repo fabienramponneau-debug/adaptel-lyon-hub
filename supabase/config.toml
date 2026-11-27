@@ -4,4 +4,4 @@ project_id = "hwkhaxawsqvgarxlqzzd"
 verify_jwt = false
 
 [functions.sync-agency-actuals]
-verify_jwt = true
+verify_jwt = false

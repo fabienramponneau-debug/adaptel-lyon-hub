@@ -37,6 +37,7 @@ Table `public.objectifs_financiers` :
 - `period_code` : mois `YYYY-MM` ;
 - `objectif_ca` : chiffre d'affaires attendu ;
 - `objectif_marge` : marge attendue.
+- `reference_marge` : `avant_cet` par defaut, ou `apres_cet`.
 
 Un seul enregistrement est autorise par commercial et par mois.
 
@@ -63,13 +64,25 @@ Table `public.performances_clients` :
 - `period_code` : mois `YYYY-MM` ;
 - `chiffre_affaires` ;
 - `marge` ;
+- `marge_apres_cet` : marge ERP apres CET, distincte de `marge` qui reste la marge avant CET ;
+- `heures_facturees` ;
 - `source` : `manuel` ou `agence` ;
 - `agency_client_id` ;
 - `commentaire` optionnel.
 - `statut_cloture` : `brouillon` ou `confirme` ;
 - `cloture_at` et `cloture_by` : piste d'audit de la validation admin.
+- `prime_beneficiaire_id`, `prime_taux`, `prime_montant` : snapshot fige a la confirmation.
 
-Un seul enregistrement est autorise par commercial, etablissement et mois. Les chiffres reels restent en brouillon jusqu'a confirmation explicite de l'administrateur CRM.
+Un seul enregistrement est autorise par commercial, etablissement et mois. Pour les lignes `source = 'agence'`, les reels sont confirmes par l'import ERP et sont en lecture seule dans le CRM. La saisie CRM reste reservee aux fiches non rapprochees et aux anciennes lignes manuelles.
+
+### Primes
+
+`commission_rules` contient des versions completes de trois paliers, inserees sans mise a jour : mois 1 a 12 (5 % + 2 %), mois 13 a 24 (4 %), puis 3 %. Le moteur unique `commission_rate_v1` utilise la marge avant CET et `client_triggered_by`. Le trigger de confirmation fige le resultat sur `performances_clients`. Les ecrans et le pont lisent uniquement ce snapshot.
+
+Operations admin agence :
+
+- `get_commission_rules` : retourne toutes les versions du bareme ;
+- `set_commission_rules { effectiveFrom, rules }` : ajoute atomiquement une version complete ; les taux sont des fractions (`0.05` = 5 %).
 
 ## Operations attendues du pont
 
@@ -131,6 +144,7 @@ Sortie minimale :
 ### `set_crm_objectives`
 
 Reserve a un administrateur agence authentifie. Met a jour les objectifs d'actions et financiers d'un commercial pour un mois donne.
+Le champ optionnel `marginReference` vaut `avant_cet` ou `apres_cet`.
 
 ### `manage_crm_user`
 
@@ -140,7 +154,7 @@ Reserve a un administrateur agence authentifie. Relaie cote serveur les operatio
 
 L'Edge Function CRM `sync-agency-actuals` est reservee a un administrateur CRM
 actif. Elle appelle `crm-agence-entrant` avec l'operation
-`list_monthly_actuals`, puis remplace uniquement les lignes CRM de source
+`list_monthly_actuals`, puis insere ou revise uniquement les lignes CRM de source
 `agence` sur la periode demandee.
 
 - une periode couvre de 1 a 36 mois ;
@@ -150,13 +164,26 @@ actif. Elle appelle `crm-agence-entrant` avec l'operation
   agence conserve le dernier cloture CRM jusqu'a une nouvelle confirmation ;
 - un client sans `commercial_id` n'est attribue a aucun commercial et est
   signale dans le bilan de synchronisation ;
-- une periode deja cloturee conserve le commercial auquel elle avait ete
-  attribuee ; seules les nouvelles periodes prennent l'attribution courante ;
+- le contrat d'une ligne est `{ agencyClientId, periodCode, revenue, marginBeforeCet, marginAfterCet, hoursBilled, hoursPaid, confirmedAt, source }` ; aucun repli sur l'ancien champ ambigu `margin` n'est effectue ;
+- une nouvelle periode utilise le commercial valable pour le mois dans `establishment_assignment_history` ; une ligne existante conserve son `user_id` ;
+- une ligne confirmee identique ou dont `confirmedAt` n'est pas plus recent n'est pas reecrite ;
+- une nouvelle confirmation agence plus recente peut reviser la ligne et cree un nouveau snapshot de prime ;
 - les saisies manuelles CRM ne sont pas supprimees en masse : une ligne agence
   ne la remplace que lorsqu'un reel confirme correspondant existe.
 
 Secret CRM requis : `AGENCY_CRM_SYNC_SECRET`. L'URL agence peut rester celle du
 contrat ou etre surchargee par `AGENCY_CRM_BRIDGE_URL`.
+
+La fonction accepte aussi un appel planifie portant `x-adaptel-cron-secret`, egal au secret Supabase `SYNC_AGENCY_ACTUALS_CRON_SECRET`. Ce jeton ne permet que `sync_actuals`. Sans periodes, l'appel quotidien traite le mois courant et le mois precedent. La planification n'est activee qu'au moment de la publication, apres configuration du secret.
+
+## Rapprochement assiste depuis le CRM
+
+La meme fonction CRM existante prend en charge :
+
+- `search_agency_clients { q }` : relaie la recherche agence par nom ou matricule ;
+- `link_agency_client { establishmentId, agencyClientId, erpClientCode }` : relit le resultat cote agence, controle les doublons, puis renseigne uniquement les identifiants techniques et le SIRET.
+
+Le rapprochement exige une fiche CRM deja classee `client`. Il ne cree jamais de client dans l'app agence et ne modifie ni `commercial_id`, ni `client_triggered_by`, ni `client_triggered_at`.
 
 ## Securite obligatoire cote app agence
 
